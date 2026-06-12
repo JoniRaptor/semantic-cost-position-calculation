@@ -1,0 +1,14 @@
+@startuml
+participant "EditorBridge" as Bridge
+participant "engine" as E
+
+Bridge -> E: ComputeForward(document.root, rules)
+note right: 'entire document gets recalculated'
+loop do for every node starting from children upwards
+    E -> E: get NodeType
+    E -> E: get Total of attached children of currentNode
+    note right: 'if currentNode has no children then childTotal is 0'
+    E -> E: apply forward-Rules to currentNode -> lookup: applyRules.plantuml
+end
+E --> Bridge: return forward calculated document
+@enduml

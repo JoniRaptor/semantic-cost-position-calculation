@@ -1,0 +1,21 @@
+@startuml
+participant "ResolveBackward/ComputeForward" as RCBF
+participant "ApplyRules" as AR
+
+RCBF -> AR: ApplyRules(currentNode, nodeType, mode)
+note right: mode is either forward or backward
+loop apply for every rule defined in the nodeType to the currentNode
+    alt currentRule.mode != mode
+        AR -> AR: continue to next rule in nodeType
+    end
+    note left: 'rules apllied in the order they are defined in the RuleSetDefinition'
+    alt mode == 'forward'
+        AR -> AR: evaluate Expression from currentRule for currentRule.targetField
+        AR -> AR: continue to next rule in nodeType
+    end
+    alt mode == 'backward' and currentRule has expression and \n targetField for Backward calculation
+        AR -> AR: evaluate backwardExpression from currentRule for \n currentRule.backwardTargetField
+    end
+end
+AR -> RCBF: return currentNode wit recalculated values
+@enduml

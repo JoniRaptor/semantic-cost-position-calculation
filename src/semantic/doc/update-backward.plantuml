@@ -1,0 +1,30 @@
+@startuml
+participant "EditorBridge" as Bridge
+participant "engine" as E
+
+Bridge -> E: ResolveBackwardNode(currentNode, rules, targetField, targetValue)
+note right: 'currentNode: tree with the last edited node at the top'
+E -> E: get NodeType
+E -> E: set currentNode[targetField] to targetValue
+E -> E: get FieldType from currentNode[targetField]
+alt Node has Children
+    alt FieldType depends on Total from children and isn't of Type 'total'
+        E -> E: apply backward-Rules to currentNode -> lookup: applyRUles.plantuml
+    end
+    E -> E: get desired_children_Total from 'total'-Field in currentNode
+    E -> E: get current_children_Total of 'total'-Fields in children-Nodes before adjustment
+    loop do for every child-Node
+        E -> E: get child-NodeType
+        E -> E: get current child_Total from 'total'-Field
+        E -> E: calculate new_child_Total = \n desired_children_Total * (current_children_Total/child_Total)
+        E -> E: ResolveBackwardNode(childNode, rules, targetField = 'total', new_child_Total)
+    end
+end
+E -> E: get new_children_Total
+E -> E: apply backward-Rules tu currentNode -> lookup: applyRUles.plantuml
+E --> Bridge: return {document {root: recalculated currentNode-tree}}
+Bridge -> Bridge: replace currentNode with new_currentNode-tree in document-tree
+Bridge -> E: ComputeForward(document.root, rules)
+E -> E: lookup update-forward.plantuml
+E --> Bridge: return forward calculated document
+@enduml
