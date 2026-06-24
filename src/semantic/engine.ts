@@ -2,6 +2,9 @@ export type Value = number | string | boolean | null;
 export type FieldKind = "number" | "string" | "boolean";
 export type Mode = "forward" | "backward";
 
+/**
+ * definition of a field of a PositionType with extra boolean flags for specific behavior
+ */
 export interface FieldDefinition {
   id: string;
   label: string;
@@ -11,6 +14,12 @@ export interface FieldDefinition {
   childdependent?: boolean;
 }
 
+/**
+ * - definition of a rule to calculate a field of a PositionType
+ * - rule can be of mode forward or backward
+ * - if backward-Parameters are set, the rule is automatically recognized as a backward rule
+ * - backward-Parameters (backwardTargetField and backwardExpression) are optional
+ */
 export interface RuleDefinition {
   id: string;
   targetField: string;
@@ -20,6 +29,9 @@ export interface RuleDefinition {
   backwardExpression?: string;
 }
 
+/**
+ * definition of a PositionType with its fields and rules for those fields
+ */
 export interface PositionTypeDefinition {
   typeId: string;
   label: string;
@@ -27,10 +39,18 @@ export interface PositionTypeDefinition {
   rules: RuleDefinition[];
 }
 
+/**
+ * definition of all PositionTypes and their rules
+ */
 export interface RuleSetDefinition {
   positionTypes: PositionTypeDefinition[];
 }
 
+/**
+ * - definition of a node in the cost-tree
+ * - one node is a cost-position and has a typeId for the atributed PositionType
+ * - one node/cost-position can have children/subpositions
+ */
 export interface CostNode {
   id: string;
   typeId: string;
@@ -39,24 +59,51 @@ export interface CostNode {
   children: CostNode[];
 }
 
+/**
+ * definition of a document with a root node/cost-position
+ */
 export interface CostDocument {
   root: CostNode;
 }
 
+/**
+ * output of an engine-calculation is the updated document
+ */
 export interface EngineResult {
   document: CostDocument;
 }
 
+//-------------------------------------------------------------
+// helper functions
+//-------------------------------------------------------------
+
+/**
+ * small helper function to check if a value is a finite number
+ * @param v Value to check
+ * @returns true if value is a finite number else false
+ */
 function isNumber(v: Value): v is number {
   return typeof v === "number" && Number.isFinite(v);
 }
 
+/**
+ * convert a number to a number if possible
+ * @param raw string to convert
+ * @returns number or original string (if raw value is not finite number)
+ */
 function toNumberValue(raw: string): number | string {
   if (raw.trim() === "") return "";
   const n = Number(raw);
   return Number.isFinite(n) ? n : raw;
 }
 
+/**
+ * gets a numeric value from a record
+ * @param values the record
+ * @param key the key-string of the desired value
+ * @param fallback fallback value
+ * @returns a number
+ */
 export function getNumeric(
   values: Record<string, Value>,
   key: string,
@@ -66,6 +113,11 @@ export function getNumeric(
   return isNumber(v) ? v : fallback;
 }
 
+/**
+ * clone a node/cost-position
+ * @param node the node to clone
+ * @returns cloned note/cost-position
+ */
 export function cloneNode(node: CostNode): CostNode {
   return {
     id: node.id,
@@ -76,6 +128,11 @@ export function cloneNode(node: CostNode): CostNode {
   };
 }
 
+/**
+ * convert a RuleSetDefinition to a Map of PositionTypeDefinition
+ * @param def the RuleSetDefinition
+ * @returns Map of TypeId -> PositionTypeDefinition
+ */
 export function loadRuleSet(
   def: RuleSetDefinition,
 ): Map<string, PositionTypeDefinition> {
@@ -84,6 +141,16 @@ export function loadRuleSet(
   return map;
 }
 
+//-------------------------------------------------------------
+// engine functions for updating the cost-tree
+//-------------------------------------------------------------
+
+/**
+ * evaluate an expression with the given Record of Values from the node/cost-position
+ * @param expression the expression to evaluate
+ * @param values the Record of Values to use for the evaluation
+ * @returns result of the evaluation of the expression with the given values as number
+ */
 export function evaluateExpression(
   expression: string,
   values: Record<string, Value>,
@@ -96,6 +163,11 @@ export function evaluateExpression(
   return typeof result === "number" && Number.isFinite(result) ? result : 0;
 }
 
+/**
+ * attach the total-value of the "total"-fields of all children to the node/cost-position
+ * @param node the parent-node to attach the total to
+ * @returns the parent-node with the new children-total attached
+ */
 function attachChildrenTotal(node: CostNode): CostNode {
   const next = cloneNode(node);
   next.values.childrenTotal = next.children.reduce(
@@ -105,6 +177,13 @@ function attachChildrenTotal(node: CostNode): CostNode {
   return next;
 }
 
+/**
+ * apply all rules to the node/cost-position for it's given PositionType
+ * @param node the node to apply the rules to
+ * @param typeDef the PositionTypeDefinition of the node
+ * @param mode mode for calculating forward or backward
+ * @returns the node with the new values
+ */
 function applyRules(
   node: CostNode,
   typeDef: PositionTypeDefinition,
@@ -135,6 +214,12 @@ function applyRules(
   return next;
 }
 
+/**
+ * sum of a given field over a set of given CostNodes (children)
+ * @param children the children-nodes to sum
+ * @param field the field to sum
+ * @returns sum of all children for the given field
+ */
 function sumChildField(children: CostNode[], field: string): number {
   return children.reduce(
     (sum, child) => sum + getNumeric(child.values, field, 0),
@@ -142,6 +227,12 @@ function sumChildField(children: CostNode[], field: string): number {
   );
 }
 
+/**
+ * compute document forward from the root
+ * @param root the root-node of the cost-tree
+ * @param ruleSet the Map of PositionTypeDefinition from the ruleSet
+ * @returns new cost-tree after forward computation
+ */
 export function computeForward(
   root: CostNode,
   ruleSet: Map<string, PositionTypeDefinition>,
@@ -151,6 +242,7 @@ export function computeForward(
     if (!typeDef) throw new Error(`Unknown typeId: ${node.typeId}`);
 
     let current = cloneNode(node);
+    // always apply rules to children first because parent-nodes depend on children
     current.children = current.children.map(walk);
     current = attachChildrenTotal(current);
     current = applyRules(current, typeDef, "forward");
@@ -170,6 +262,14 @@ export function computeForward(
   return walk(root);
 }
 
+/**
+ * compute document backward from root
+ * @param node the root of the cost-tree which to compute backward
+ * @param ruleSet the Map of PositionTypeDefinition from the ruleSet
+ * @param targetField the changed field that triggered the backward-computation
+ * @param targetValue the value of the changed field
+ * @returns new cost-tree after backward computation
+ */
 function resolveBackwardNode(
   node: CostNode,
   ruleSet: Map<string, PositionTypeDefinition>,
@@ -191,6 +291,8 @@ function resolveBackwardNode(
     !fieldDef?.fixed;
 
   if (canDistribute) {
+    // if value of field depends on children (i.e. changes total), apply rules before distributing total on children
+    // is necessary to correctly change total for current node and then distribute correct total on children
     if (fieldDef?.childdependent && fieldDef.id !== "total") {
       current = applyRules(current, typeDef, "backward");
     }
@@ -198,6 +300,7 @@ function resolveBackwardNode(
     const totalChildrenCurrent = sumChildField(current.children, "total");
 
     if (totalChildrenCurrent > 0) {
+      // apply rules to children backward and evenly distribute new total of parent-node
       current.children = current.children.map((child) => {
         const childDef = ruleSet.get(child.typeId);
         const childField = childDef?.fields.find((f) => f.id === "total");
@@ -225,12 +328,21 @@ function resolveBackwardNode(
     );
   }
 
+  // after distributing total on children, apply backward-rules to parent
   current = attachChildrenTotal(current);
   current = applyRules(current, typeDef, "backward");
 
   return current;
 }
 
+/**
+ * compute document backward from the root
+ * @param root the root-node of the cost-tree
+ * @param ruleSet the Map of PositionTypeDefinition from the ruleSet
+ * @param targetField the changed field that triggered the backward-computation
+ * @param targetValue the value of the changed field
+ * @returns new cost-tree after backward computation
+ */
 export function computeBackward(
   root: CostNode,
   ruleSet: Map<string, PositionTypeDefinition>,
@@ -240,6 +352,11 @@ export function computeBackward(
   return resolveBackwardNode(root, ruleSet, targetField, targetValue);
 }
 
+/**
+ * CostEngine:
+ * Object to compute forward and backward a given dosument cost-tree.
+ * Has a set of rules to compute forward and backward.
+ */
 export class CostEngine {
   private readonly rules: Map<string, PositionTypeDefinition>;
 
@@ -247,10 +364,22 @@ export class CostEngine {
     this.rules = loadRuleSet(def);
   }
 
+  /**
+   * compute document forward from the root
+   * @param document the document to compute forward
+   * @returns new cost-tree after forward computation
+   */
   forward(document: CostDocument): EngineResult {
     return { document: { root: computeForward(document.root, this.rules) } };
   }
 
+  /**
+   * compute document backward from the root
+   * @param document the document to compute backward
+   * @param targetField the changed field that triggered the backward-computation
+   * @param targetValue the value of the changed field
+   * @returns new cost-tree after backward computation
+   */
   backward(
     document: CostDocument,
     targetField: string,
@@ -268,6 +397,12 @@ export class CostEngine {
     };
   }
 
+  /**
+   * check if engine has a rule that allows a field can be changed backward
+   * @param typeId the id of the PositionType
+   * @param fieldId the id of the field
+   * @returns true if there is a rule that allows the field can be changed backward
+   */
   canBackwardAdjust(typeId: string, fieldId: string): boolean {
     const typeDef = this.rules.get(typeId);
     if (!typeDef) return false;
@@ -279,16 +414,35 @@ export class CostEngine {
     );
   }
 
+  /**
+   * check if a field can be changed backward
+   * @param node the node to check
+   * @param field the field to check
+   * @returns true if the field can be changed backward
+   */
   fieldIsBackwardEditable(node: CostNode, field: FieldDefinition): boolean {
     if (field.kind !== "number") return false;
     if (field.id === "total") return true;
     return this.canBackwardAdjust(node.typeId, field.id);
   }
 
+  /**
+   * get a PositionTypeDefinition by id-string
+   * @param typeId the id-string of the PositionType
+   * @returns the PositionTypeDefinition or undefined if not found
+   */
   getType(typeId: string): PositionTypeDefinition | undefined {
     return this.rules.get(typeId);
   }
 
+  /**
+   * update the cost-tree upon a field change
+   * @param tree the cost-tree to update
+   * @param nodeId the id of the node to update
+   * @param field the field that was changed
+   * @param rawValue the new value of the field
+   * @returns the updated cost-tree
+   */
   updateTreeForFieldChange(
     tree: CostDocument,
     nodeId: string,
@@ -300,6 +454,7 @@ export class CostEngine {
 
     const parsed = toNumberValue(rawValue);
 
+    // first compute backward if possible
     if (
       this.fieldIsBackwardEditable(currentNode, field) &&
       typeof parsed === "number"
@@ -310,6 +465,7 @@ export class CostEngine {
       return this.forward({ root: replaced }).document;
     }
 
+    // compute forward
     const updatedNode: CostNode = {
       ...currentNode,
       values: {
@@ -323,6 +479,12 @@ export class CostEngine {
   }
 }
 
+/**
+ * find a node in the cost-tree by id
+ * @param node the root-node of the cost-tree
+ * @param id the id of the node to find
+ * @returns the first matching node or undefined if not found
+ */
 export function findNodeById(node: CostNode, id: string): CostNode | undefined {
   if (node.id === id) return node;
   for (const child of node.children) {
@@ -332,6 +494,13 @@ export function findNodeById(node: CostNode, id: string): CostNode | undefined {
   return undefined;
 }
 
+/**
+ * replace a node in the cost-tree by id
+ * @param node the root-node of the cost-tree
+ * @param id the id of the node to replace
+ * @param replacement the replacement-node
+ * @returns the new cost-tree
+ */
 export function replaceNodeById(
   node: CostNode,
   id: string,
