@@ -1,5 +1,5 @@
 export type Value = number | string | boolean | null;
-export type FieldKind = "number" | "string" | "boolean";
+export type FieldKind = "number" | "string" | "boolean" | "percent";
 export type Mode = "forward" | "backward";
 
 /**
@@ -37,6 +37,7 @@ export interface PositionTypeDefinition {
   label: string;
   fields: FieldDefinition[];
   rules: RuleDefinition[];
+  isPercentDiscount?: boolean;
 }
 
 /**
@@ -46,24 +47,48 @@ export interface RuleSetDefinition {
   positionTypes: PositionTypeDefinition[];
 }
 
+export interface CostNodeView {
+  id: string;
+  typeId: string;
+  label: string;
+  values: Record<string, Value>;
+  children: CostNodeView[];
+}
+
 /**
  * - definition of a node in the cost-tree
  * - one node is a cost-position and has a typeId for the atributed PositionType
  * - one node/cost-position can have children/subpositions
  */
-export interface CostNode {
+export class CostNode implements CostNodeView {
   id: string;
   typeId: string;
   label: string;
   values: Record<string, Value>;
   children: CostNode[];
+  parent?: CostNode;
+  constructor(id: string, typeId: string, label: string, values: Record<string, Value>, children?: CostNode[], parent?: CostNode) {
+    this.id = id;
+    this.typeId = typeId;
+    this.label = label;
+    this.values = values;
+    this.children = [];
+    for (const child of children || []) {
+      this.addChild(child);
+    }
+    this.parent = parent;
+  }
+  addChild(child: CostNode): void {
+    child.parent = this;
+    this.children.push(child);
+  }
 }
 
 /**
  * definition of a document with a root node/cost-position
  */
 export interface CostDocument {
-  root: CostNode;
+  root: CostNodeView;
 }
 
 /**
@@ -119,13 +144,7 @@ export function getNumeric(
  * @returns cloned note/cost-position
  */
 export function cloneNode(node: CostNode): CostNode {
-  return {
-    id: node.id,
-    typeId: node.typeId,
-    label: node.label,
-    values: { ...node.values },
-    children: node.children.map(cloneNode),
-  };
+  return new CostNode(node.id, node.typeId, node.label, node.values, node.children.map(cloneNode), node.parent);
 }
 
 /**
@@ -169,12 +188,11 @@ export function evaluateExpression(
  * @returns the parent-node with the new children-total attached
  */
 function attachChildrenTotal(node: CostNode): CostNode {
-  const next = cloneNode(node);
-  next.values.childrenTotal = next.children.reduce(
+  node.values.childrenTotal = node.children.reduce(
     (sum, child) => sum + getNumeric(child.values, "total", 0),
     0,
   );
-  return next;
+  return node;
 }
 
 /**
@@ -189,29 +207,27 @@ function applyRules(
   typeDef: PositionTypeDefinition,
   mode: Mode,
 ): CostNode {
-  const next = cloneNode(node);
-
   for (const rule of typeDef.rules) {
     const ruleMode = rule.mode ?? "forward";
     if (ruleMode !== mode) continue;
 
     if (mode === "forward") {
-      next.values[rule.targetField] = evaluateExpression(
+      node.values[rule.targetField] = evaluateExpression(
         rule.expression,
-        next.values,
+        node.values,
       );
       continue;
     }
 
     if (rule.backwardExpression && rule.backwardTargetField) {
-      next.values[rule.backwardTargetField] = evaluateExpression(
+      node.values[rule.backwardTargetField] = evaluateExpression(
         rule.backwardExpression,
-        next.values,
+        node.values,
       );
     }
   }
 
-  return next;
+  return node;
 }
 
 /**
@@ -225,6 +241,31 @@ function sumChildField(children: CostNode[], field: string): number {
     (sum, child) => sum + getNumeric(child.values, field, 0),
     0,
   );
+}
+
+function removeTotalAndChildrenfromDiscountNode(node: CostNode, ruleSet: Map<string, PositionTypeDefinition>): CostNode {
+  const typeDef = ruleSet.get(node.typeId);
+  if(typeDef?.isPercentDiscount) {
+    node.values.total = 0;
+    node.children = [];
+    return node;
+  }
+  return node;
+}
+
+function removeParentsForJSON(root: CostNode): CostNode {
+  if(root.parent) {
+    root.parent = undefined;
+  }
+
+  root.children = root.children.map(removeParentsForJSON);
+  return root;
+}
+
+function attachParents(node: CostNode, parent?: CostNode): CostNode {
+  node.parent = parent;
+  node.children = node.children.map((child) => attachParents(child, node));
+  return node;
 }
 
 /**
@@ -241,25 +282,56 @@ export function computeForward(
     const typeDef = ruleSet.get(node.typeId);
     if (!typeDef) throw new Error(`Unknown typeId: ${node.typeId}`);
 
-    let current = cloneNode(node);
+    // remove total and children from percentage-discount node -> shouldn't have children and total is only calculated at the end of computation
+    // on first walk do nothing with percentage-discount
+    if (typeDef.isPercentDiscount) {
+      node = removeTotalAndChildrenfromDiscountNode(node, ruleSet);
+      return node;
+    }
     // always apply rules to children first because parent-nodes depend on children
-    current.children = current.children.map(walk);
-    current = attachChildrenTotal(current);
-    current = applyRules(current, typeDef, "forward");
+    node.children = node.children.map(walk);
+    node = attachChildrenTotal(node);
+    node = applyRules(node, typeDef, "forward");
 
+    // every node must have a total-field
     const totalField = typeDef.fields.find((f) => f.id === "total");
     if (
       totalField &&
-      current.children.length > 0 &&
-      current.values.total == null
+      node.children.length > 0 &&
+      node.values.total == null
     ) {
-      current.values.total = sumChildField(current.children, "total");
+      node.values.total = sumChildField(node.children, "total");
     }
 
-    return current;
+    return node;
   };
 
-  return walk(root);
+  const walkWithDiscount = (node: CostNode): CostNode => {
+    const typeDef = ruleSet.get(node.typeId);
+    if (!typeDef) throw new Error(`Unknown typeId: ${node.typeId}`);
+
+    node.children = node.children.map(walkWithDiscount);
+
+    if (typeDef.isPercentDiscount && node.parent && node.parent.typeId) {
+      const parentTypeDef = ruleSet.get(node.parent!.typeId);
+      if (!parentTypeDef) throw new Error(`Unknown typeId: ${node.parent!.typeId}`);
+      node.parent = attachChildrenTotal(node.parent!);
+      node.parent = applyRules(node.parent, parentTypeDef, "forward");
+      node.values.parentTotal = getNumeric(node.parent.values, "total", 0);
+      node = applyRules(node, typeDef, "forward");
+      node.parent = attachChildrenTotal(node.parent!);
+      node.parent = applyRules(node.parent, parentTypeDef, "forward");
+    }
+
+    return node;
+  }
+
+  root = attachParents(root);
+  root = walk(root);
+  root = walkWithDiscount(root);
+  root = removeParentsForJSON(root);
+
+  return root;
 }
 
 /**
@@ -279,29 +351,28 @@ function resolveBackwardNode(
   const typeDef = ruleSet.get(node.typeId);
   if (!typeDef) throw new Error(`Unknown typeId: ${node.typeId}`);
 
-  let current = cloneNode(node);
   if (typeof targetValue === "number" && Number.isFinite(targetValue)) {
-    current.values[targetField] = targetValue;
+    node.values[targetField] = targetValue;
   }
 
   const fieldDef = typeDef.fields.find((f) => f.id === targetField);
   const canDistribute =
-    current.children.length > 0 &&
-    current.values[targetField] != null &&
+    node.children.length > 0 &&
+    node.values[targetField] != null &&
     !fieldDef?.fixed;
 
   if (canDistribute) {
     // if value of field depends on children (i.e. changes total), apply rules before distributing total on children
     // is necessary to correctly change total for current node and then distribute correct total on children
     if (fieldDef?.childdependent && fieldDef.id !== "total") {
-      current = applyRules(current, typeDef, "backward");
+      node = applyRules(node, typeDef, "backward");
     }
-    const desiredTotal = getNumeric(current.values, "total", 0);
-    const totalChildrenCurrent = sumChildField(current.children, "total");
+    const desiredTotal = getNumeric(node.values, "total", 0);
+    const totalChildrenCurrent = sumChildField(node.children, "total");
 
     if (totalChildrenCurrent > 0) {
       // apply rules to children backward and evenly distribute new total of parent-node
-      current.children = current.children.map((child) => {
+      node.children = node.children.map((child) => {
         const childDef = ruleSet.get(child.typeId);
         const childField = childDef?.fields.find((f) => f.id === "total");
         const currentChildTarget = getNumeric(child.values, "total", 0);
@@ -322,17 +393,17 @@ function resolveBackwardNode(
         return resolveBackwardNode(child, ruleSet, "total", nextTarget);
       });
     }
-  } else if (current.children.length > 0) {
-    current.children = current.children.map((child) =>
+  } else if (node.children.length > 0) {
+    node.children = node.children.map((child) =>
       resolveBackwardNode(child, ruleSet, targetField),
     );
   }
 
   // after distributing total on children, apply backward-rules to parent
-  current = attachChildrenTotal(current);
-  current = applyRules(current, typeDef, "backward");
+  node = attachChildrenTotal(node);
+  node = applyRules(node, typeDef, "backward");
 
-  return current;
+  return node;
 }
 
 /**
@@ -370,7 +441,7 @@ export class CostEngine {
    * @returns new cost-tree after forward computation
    */
   forward(document: CostDocument): EngineResult {
-    return { document: { root: computeForward(document.root, this.rules) } };
+    return { document: { root: computeForward(document.root as CostNode, this.rules) } };
   }
 
   /**
@@ -388,7 +459,7 @@ export class CostEngine {
     return {
       document: {
         root: computeBackward(
-          document.root,
+          document.root as CostNode,
           this.rules,
           targetField,
           targetValue,
@@ -403,7 +474,7 @@ export class CostEngine {
    * @param fieldId the id of the field
    * @returns true if there is a rule that allows the field can be changed backward
    */
-  canBackwardAdjust(typeId: string, fieldId: string): boolean {
+  private canBackwardAdjust(typeId: string, fieldId: string): boolean {
     const typeDef = this.rules.get(typeId);
     if (!typeDef) return false;
     return typeDef.rules.some(
@@ -420,7 +491,7 @@ export class CostEngine {
    * @param field the field to check
    * @returns true if the field can be changed backward
    */
-  fieldIsBackwardEditable(node: CostNode, field: FieldDefinition): boolean {
+  private fieldIsBackwardEditable(node: CostNode, field: FieldDefinition): boolean {
     if (field.kind !== "number") return false;
     if (field.id === "total") return true;
     return this.canBackwardAdjust(node.typeId, field.id);
@@ -431,7 +502,7 @@ export class CostEngine {
    * @param typeId the id-string of the PositionType
    * @returns the PositionTypeDefinition or undefined if not found
    */
-  getType(typeId: string): PositionTypeDefinition | undefined {
+  public getType(typeId: string): PositionTypeDefinition | undefined {
     return this.rules.get(typeId);
   }
 
@@ -443,13 +514,13 @@ export class CostEngine {
    * @param rawValue the new value of the field
    * @returns the updated cost-tree
    */
-  updateTreeForFieldChange(
+  public updateTreeForFieldChange(
     tree: CostDocument,
     nodeId: string,
     field: FieldDefinition,
     rawValue: string,
   ): CostDocument {
-    const currentNode = findNodeById(tree.root, nodeId);
+    const currentNode = findNodeById(tree.root as CostNode, nodeId);
     if (!currentNode) return tree;
 
     const parsed = toNumberValue(rawValue);
@@ -461,20 +532,15 @@ export class CostEngine {
     ) {
       const subtree = this.backward({ root: currentNode }, field.id, parsed)
         .document.root;
-      const replaced = replaceNodeById(tree.root, nodeId, subtree);
+      const replaced = replaceNodeById(tree.root as CostNode, nodeId, subtree as CostNode);
       return this.forward({ root: replaced }).document;
     }
 
     // compute forward
-    const updatedNode: CostNode = {
-      ...currentNode,
-      values: {
-        ...currentNode.values,
-        [field.id]: parsed,
-      },
-    };
+    const updatedNode = currentNode;
+    updatedNode.values[field.id] = parsed;
 
-    const replaced = replaceNodeById(tree.root, nodeId, updatedNode);
+    const replaced = replaceNodeById(tree.root as CostNode, nodeId, updatedNode);
     return this.forward({ root: replaced }).document;
   }
 }
@@ -510,13 +576,10 @@ export function replaceNodeById(
     return cloneNode(replacement);
   }
 
-  return {
-    ...node,
-    values: { ...node.values },
-    children: node.children.map((child) =>
-      replaceNodeById(child, id, replacement),
-    ),
-  };
+  node.children = node.children.map((child) =>
+    replaceNodeById(child, id, replacement),
+  );
+  return node;
 }
 
 export const exampleRuleSet: RuleSetDefinition = {
@@ -641,12 +704,13 @@ export const exampleRuleSet: RuleSetDefinition = {
       typeId: "discount",
       label: "Rabatt",
       fields: [
-        { id: "amount", label: "Betrag", kind: "number" },
-        { id: "total", label: "Gesamtpreis", kind: "number", computed: true },
+        { id: "percentage", label: "Prozent", kind: "percent" },
+        { id: "total", label: "Gesamtrabatt", kind: "number", computed: true },
       ],
       rules: [
-        { id: "discount-total", targetField: "total", expression: "-amount" },
+        { id: "discount-total", targetField: "total", expression: "- parentTotal * percentage / 100" },
       ],
+      isPercentDiscount: true,
     },
   ],
 };
@@ -682,9 +746,38 @@ export const exampleDocument: CostDocument = {
       },
       {
         id: "p2",
+        typeId: "painting_room",
+        label: "Wohnzimmer",
+        values: { length: 5, width: 4, pricePerSqm: 12 },
+        children: [
+          {
+            id: "p2-m1",
+            typeId: "material",
+            label: "Farbe",
+            values: { liters: 6, pricePerLiter: 18 },
+            children: [],
+          },
+          {
+            id: "p2-l1",
+            typeId: "labor",
+            label: "Arbeit",
+            values: { hours: 8, rate: 35 },
+            children: [],
+          },
+          {
+            id: "p2-d1",
+            typeId: "discount",
+            label: "Rabatt",
+            values: { percentage: 15 },
+            children: [],
+          }
+        ],
+      },
+      {
+        id: "p3",
         typeId: "discount",
         label: "Rabatt",
-        values: { amount: 15 },
+        values: { percentage: 15 },
         children: [],
       },
     ],
