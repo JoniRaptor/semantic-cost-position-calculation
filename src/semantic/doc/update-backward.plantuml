@@ -5,22 +5,41 @@ participant "engine" as E
 Bridge -> E: ResolveBackwardNode(currentNode, rules, targetField, targetValue)
 note right: 'currentNode: tree with the last edited node at the top'
 E -> E: get NodeType
+E -> E: get parentNodeType
+alt currentNode is of type discountNode (isPercentDiscount)
+    loop do for every child of parntNode starting from bottom until currentNode
+        alt parentNode is of type discountNode
+            E->E: subtract total of child from parentNode
+            note right: discountNodes can only have children of discountNodes
+        end
+        E->E: remove total from child if child is discoutNode
+    end
+    alt parentNode is not of type discountNode
+        E->E: get total of attached children and parentNode of currentNode
+        E -> E: apply forward-Rules to currentNode -> lookup: applyRules.plantuml
+    end
+end
 E -> E: set currentNode[targetField] to targetValue
 E -> E: get FieldType from currentNode[targetField]
 alt Node has Children
-    alt FieldType depends on Total from children and isn't of Type 'total'
+    alt FieldType directly changes total of node and isn't of Type 'total'
         E -> E: apply backward-Rules to currentNode -> lookup: applyRUles.plantuml
     end
     E -> E: get desired_children_Total from 'total'-Field in currentNode
     E -> E: get current_children_Total of 'total'-Fields in children-Nodes before adjustment
     loop do for every child-Node
         E -> E: get child-NodeType
+        alt child is of type discountNode
+            E->E: set child_Total to 0
+            note right: discount nodes get properly recalculated on forward-calculation after
+            E->E: go to next child in loop
+        end
         E -> E: get current child_Total from 'total'-Field
         E -> E: calculate new_child_Total = \n desired_children_Total * (current_children_Total/child_Total)
         E -> E: ResolveBackwardNode(childNode, rules, targetField = 'total', new_child_Total)
     end
 end
-E -> E: get new_children_Total
+E->E: get total of updated attached children and parentNode of currentNode
 E -> E: apply backward-Rules tu currentNode -> lookup: applyRUles.plantuml
 E --> Bridge: return {document {root: recalculated currentNode-tree}}
 Bridge -> Bridge: replace currentNode with new_currentNode-tree in document-tree

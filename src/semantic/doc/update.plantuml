@@ -3,6 +3,7 @@ participant "EditorBridge" as Bridge
 participant "engine" as E
 
 Bridge -> E: updateTreeForFieldChange(costEngine, document, currentNodeID, \n editedField-Definition, changedValue)
+E -> E: recursively register parent-nodes for backward-computation with attachParents(root)
 E -> E: find currentNode in document-tree by currentNodeID
 alt editedField-Definition has rules for backward-calculation
     E -> E: ResolveBackwardNode(currentNode, rules, targetFieldID, changedValue) \n -> lookup: update-backward.plantuml

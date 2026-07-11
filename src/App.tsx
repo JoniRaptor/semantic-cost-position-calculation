@@ -6,17 +6,17 @@ import {
   exampleRuleSet,
   CostEngine,
   CostDocument,
-  CostNode,
+  CostNodeView,
 } from "./semantic/engine";
 import { costSchema } from "./pm/schema";
 import { CostItemView } from "./pm/costNodeView";
 import { Node } from "prosemirror-model";
 
-function buildPmDocFromCostNode(node: CostNode): Node {
+function buildPmDocFromCostNode(node: CostNodeView): Node {
   return costSchema.node("doc", null, [buildCostItemNode(node)]);
 }
 
-function buildCostItemNode(node: CostNode): Node {
+function buildCostItemNode(node: CostNodeView): Node {
   return costSchema.node(
     "cost_item",
     {
@@ -33,7 +33,7 @@ function pmDocToSemanticTree(doc: EditorState["doc"]): CostDocument {
   const root = doc.firstChild;
   if (!root) return exampleDocument;
 
-  const walk = (pmNode: any): CostNode => ({
+  const walk = (pmNode: any): CostNodeView => ({
     id: pmNode.attrs.id,
     typeId: pmNode.attrs.typeId,
     label: pmNode.attrs.label,
