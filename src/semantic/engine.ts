@@ -411,7 +411,7 @@ function resolveBackwardNode(
   const typeDef = ruleSet.get(node.typeId);
   if (!typeDef) throw new Error(`Unknown typeId: ${node.typeId}`);
 
-  const parentTypeDef = ruleSet.get(node.parent!.typeId);
+  let parentTypeDef = node.parent ? ruleSet.get(node.parent!.typeId) : undefined;
   if (typeDef.isPercentDiscount && node.parent && node.parent.typeId) {
     if (!parentTypeDef)
       throw new Error(`Unknown typeId: ${node.parent!.typeId}`);
