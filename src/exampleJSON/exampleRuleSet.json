@@ -1,0 +1,256 @@
+{
+  "positionTypes": [
+    {
+      "typeId": "invoice",
+      "label": "Auftrag",
+      "fields": [
+        {
+          "id": "total",
+          "label": "Endpreis",
+          "kind": "number",
+          "computed": true
+        }
+      ],
+      "rules": [
+        {
+          "id": "invoice-total",
+          "targetField": "total",
+          "expression": "childrenTotal > 0 ? childrenTotal : total"
+        },
+        {
+          "id": "invoice-total",
+          "mode": "backward",
+          "targetField": "total",
+          "expression": "childrenTotal",
+          "backwardTargetField": "total",
+          "backwardExpression": "childrenTotal > 0 ? childrenTotal : total"
+        }
+      ]
+    },
+    {
+      "typeId": "painting_room",
+      "label": "Zimmer streichen",
+      "fields": [
+        { "id": "length", "label": "Länge", "kind": "number" },
+        { "id": "width", "label": "Breite", "kind": "number" },
+        {
+          "id": "count",
+          "label": "Fläche",
+          "kind": "number",
+          "computed": true
+        },
+        {
+          "id": "unitCost",
+          "label": "Preis pro m²",
+          "kind": "number",
+          "computed": true
+        },
+        {
+          "id": "total",
+          "label": "Gesamtpreis",
+          "kind": "number",
+          "computed": true
+        }
+      ],
+      "rules": [
+        {
+          "id": "paint-area",
+          "targetField": "count",
+          "expression": "length * width"
+        },
+        {
+          "id": "price-per-sqm",
+          "targetField": "unitCost",
+          "expression": "childrenTotal > 0 ? childrenTotal : unitCost"
+        },
+        {
+          "id": "paint-total",
+          "targetField": "total",
+          "expression": "childrenTotal > 0 ? variableChildrenTotal * count + fixedChildrenTotal : count * unitCost"
+        },
+        {
+          "id": "paint-backward-price",
+          "mode": "backward",
+          "targetField": "total",
+          "expression": "childrenTotal > 0 ? variableChildrenTotal * count + fixedChildrenTotal : count * unitCost",
+          "backwardTargetField": "unitCost",
+          "backwardExpression": "childrenTotal > 0 ? childrenTotal : total / count"
+        },
+        {
+          "id": "paint-backward-price-per-sqm",
+          "mode": "backward",
+          "targetField": "unitCost",
+          "expression": "childrenTotal",
+          "backwardTargetField": "total",
+          "backwardExpression": "childrenTotal > 0 ? variableChildrenTotal * count + fixedChildrenTotal : count * unitCost"
+        }
+      ]
+    },
+    {
+      "typeId": "material",
+      "label": "Material",
+      "fields": [
+        { "id": "count", "label": "Liter", "kind": "number", "fixed": true },
+        { "id": "unitCost", "label": "Preis pro Liter", "kind": "number" },
+        {
+          "id": "total",
+          "label": "Gesamtpreis",
+          "kind": "number",
+          "computed": true
+        }
+      ],
+      "rules": [
+        {
+          "id": "material-price-per-liter",
+          "targetField": "unitCost",
+          "expression": "childrenTotal > 0 ? childrenTotal : unitCost"
+        },
+        {
+          "id": "material-total",
+          "targetField": "total",
+          "expression": "childrenTotal > 0 ? variableChildrenTotal * count + fixedChildrenTotal : count * unitCost"
+        },
+        {
+          "id": "material-backward-price",
+          "mode": "backward",
+          "targetField": "total",
+          "expression": "count > 0 ? variableChildrenTotal * count + fixedChildrenTotal : 0",
+          "backwardTargetField": "unitCost",
+          "backwardExpression": "childrenTotal > 0 ? childrenTotal : total / count"
+        },
+        {
+          "id": "material-backward-price-per-liter",
+          "mode": "backward",
+          "targetField": "unitCost",
+          "expression": "childrenTotal > 0 ? childrenTotal : unitCost",
+          "backwardTargetField": "total",
+          "backwardExpression": "childrenTotal > 0 ? variableChildrenTotal * count + fixedChildrenTotal : count * unitCost"
+        }
+      ]
+    },
+    {
+      "typeId": "labor",
+      "label": "Arbeitszeit",
+      "fields": [
+        { "id": "count", "label": "Stunden", "kind": "number", "fixed": true },
+        { "id": "unitCost", "label": "Stundensatz", "kind": "number" },
+        {
+          "id": "total",
+          "label": "Gesamtpreis",
+          "kind": "number",
+          "computed": true
+        }
+      ],
+      "rules": [
+        {
+          "id": "labor-rate",
+          "targetField": "unitCost",
+          "expression": "childrenTotal > 0 ? childrenTotal : unitCost"
+        },
+        {
+          "id": "labor-total",
+          "targetField": "total",
+          "expression": "childrenTotal > 0 ? variableChildrenTotal * count + fixedChildrenTotal : count * unitCost"
+        },
+        {
+          "id": "labor-backward-price",
+          "mode": "backward",
+          "targetField": "total",
+          "expression": "count > 0 ? variableChildrenTotal * count + fixedChildrenTotal : 0",
+          "backwardTargetField": "unitCost",
+          "backwardExpression": "childrenTotal > 0 ? childrenTotal : total / count"
+        },
+        {
+          "id": "labor-backward-rate",
+          "mode": "backward",
+          "targetField": "unitCost",
+          "expression": "childrenTotal > 0 ? childrenTotal : unitCost",
+          "backwardTargetField": "total",
+          "backwardExpression": "childrenTotal > 0 ? variableChildrenTotal * count + fixedChildrenTotal : count * unitCost"
+        }
+      ]
+    },
+    {
+      "typeId": "travel",
+      "label": "Reisekosten",
+      "fields": [
+        {
+          "id": "count",
+          "label": "Kilometer",
+          "kind": "number",
+          "fixed": true
+        },
+        { "id": "unitCost", "label": "Preis pro km", "kind": "number" },
+        {
+          "id": "total",
+          "label": "Gesamtpreis",
+          "kind": "number",
+          "computed": true
+        }
+      ],
+      "rules": [
+        {
+          "id": "travel-price-per-km",
+          "targetField": "unitCost",
+          "expression": "childrenTotal > 0 ? childrenTotal : unitCost"
+        },
+        {
+          "id": "traavel-total",
+          "targetField": "total",
+          "expression": "childrenTotal > 0 ? variableChildrenTotal * count + fixedChildrenTotal : count * unitCost"
+        },
+        {
+          "id": "travel-backward-price",
+          "mode": "backward",
+          "targetField": "total",
+          "expression": "childrenTotal > 0 ? variableChildrenTotal * count + fixedChildrenTotal : count * unitCost",
+          "backwardTargetField": "unitCost",
+          "backwardExpression": "childrenTotal > 0 ? childrenTotal : total / count"
+        },
+        {
+          "id": "labor-backward-price-per-km",
+          "mode": "backward",
+          "targetField": "unitCost",
+          "expression": "childrenTotal > 0 ? childrenTotal : unitCost",
+          "backwardTargetField": "total",
+          "backwardExpression": "childrenTotal > 0 ? variableChildrenTotal * count + fixedChildrenTotal : count * unitCost"
+        }
+      ],
+      "type": "fixedCost"
+    },
+    {
+      "typeId": "discount",
+      "label": "Rabatt",
+      "fields": [
+        {
+          "id": "percentage",
+          "label": "Prozent",
+          "kind": "percent",
+          "backwardChangesTotal": true
+        },
+        {
+          "id": "total",
+          "label": "Gesamtrabatt",
+          "kind": "number",
+          "computed": true
+        }
+      ],
+      "rules": [
+        {
+          "id": "discount-total",
+          "targetField": "total",
+          "expression": "- parentTotal * percentage / 100 + childrenTotal"
+        },
+        {
+          "id": "discount-backward-total",
+          "mode": "backward",
+          "targetField": "total",
+          "expression": "- parentTotal * percentage / 100",
+          "backwardTargetField": "percentage",
+          "backwardExpression": "parentTotal > 0 ? - total / parentTotal * 100 + childrenTotal : 0"
+        }
+      ],
+      "type": "percentDiscount"
+    }
+  ]
+}

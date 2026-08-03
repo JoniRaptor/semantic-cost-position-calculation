@@ -11,20 +11,20 @@ loop do for every node starting from children upwards
     alt currentNode is discountNode
     E->E: remove total from discountNode and children of discountNode \n and remove every non-discountNode-child
     end
-    E -> E: get total of attached children of currentNode
+    E -> E: get total of attached variable and fixed children \n of currentNode (attaches fixedTotal and variableTotal)
     note right: 'if currentNode has no children then childTotal is 0'
     E -> E: apply forward-Rules to currentNode -> lookup: applyRules.plantuml
 end
 loop do again for every node starting from parent downward
     alt currentNode is discountNode
-    E->E: get total of attached children of parentNode of currentNode
+    E->E: get total of attached variable and fixed children of parentNode \n of currentNode variable and fixed
     E->E: E -> E: apply forward-Rules to parentNode to include total of \n children-discountNodes up to this point in the loop -> lookup: applyRules.plantuml
     note left: this time calculate discount nodes discountNodes can  \n only have discountNodes as children
-    E->E: get total of attached children and parentNode of currentNode
+    E->E: get total of attached variable and fixed children and parentNode \n of currentNode (attaches fixedTotal and variableTotal)
     E -> E: apply forward-Rules to currentNode -> lookup: applyRules.plantuml
     end
     E->E: now repeat this for choldren of currentNode
-    E->E: get total of updated attached children and parentNode of currentNode
+    E->E: get total of updated attached variable and fixed children and parentNode \n of currentNode (attaches fixedTotal and variableTotal)
     E -> E: apply forward-Rules to currentNode -> lookup: applyRules.plantuml
 end
 E->E: remove references to parentNodes from each node in tree for JSON conversion

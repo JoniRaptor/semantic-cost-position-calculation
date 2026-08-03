@@ -2,15 +2,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { EditorState, Plugin } from "prosemirror-state";
 import { EditorView } from "prosemirror-view";
 import {
-  exampleDocument,
-  exampleRuleSet,
   CostEngine,
   CostDocument,
   CostNodeView,
+  RuleSetDefinition,
 } from "./semantic/engine";
 import { costSchema } from "./pm/schema";
 import { CostItemView } from "./pm/costNodeView";
 import { Node } from "prosemirror-model";
+import exampleRuleSet from "./exampleJSON/exampleRuleSet.json";
+import exampleDocument from "./exampleJSON/exampleDocument.json";
 
 function buildPmDocFromCostNode(node: CostNodeView): Node {
   return costSchema.node("doc", null, [buildCostItemNode(node)]);
@@ -31,7 +32,8 @@ function buildCostItemNode(node: CostNodeView): Node {
 
 function pmDocToSemanticTree(doc: EditorState["doc"]): CostDocument {
   const root = doc.firstChild;
-  if (!root) return exampleDocument;
+  const document = exampleDocument as unknown as CostDocument;
+  if (!root) return document;
 
   const walk = (pmNode: any): CostNodeView => ({
     id: pmNode.attrs.id,
@@ -45,16 +47,18 @@ function pmDocToSemanticTree(doc: EditorState["doc"]): CostDocument {
 }
 
 export default function App() {
-  const engine = useMemo(() => new CostEngine(exampleRuleSet), []);
+  const ruleSet = exampleRuleSet as RuleSetDefinition;
+  const document = exampleDocument as unknown as CostDocument;
+  const engine = useMemo(() => new CostEngine(ruleSet), []);
   const fieldDefsByType = useMemo(
-    () => new Map(exampleRuleSet.positionTypes.map((t) => [t.typeId, t])),
+    () => new Map(ruleSet.positionTypes.map((t) => [t.typeId, t])),
     [],
   );
   const editorRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const applyingRef = useRef(false);
   const [summary, setSummary] = useState<CostDocument>(
-    () => engine.forward(exampleDocument).document,
+    () => engine.forward(document).document,
   );
 
   const renderDocument = (document: CostDocument) => {
@@ -78,7 +82,8 @@ export default function App() {
   useEffect(() => {
     if (!editorRef.current) return;
 
-    const startDocument = engine.forward(exampleDocument).document;
+    const document = exampleDocument as unknown as CostDocument;
+    const startDocument = engine.forward(document).document;
     const state = EditorState.create({
       schema: costSchema,
       doc: buildPmDocFromCostNode(startDocument.root),

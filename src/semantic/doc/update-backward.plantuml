@@ -15,17 +15,22 @@ alt currentNode is of type discountNode (isPercentDiscount)
         E->E: remove total from child if child is discoutNode
     end
     alt parentNode is not of type discountNode
-        E->E: get total of attached children and parentNode of currentNode
+        E->E: get total of attached variable and fixed children and parentNode \n of currentNode (attaches fixedTotal and variableTotal)
         E -> E: apply forward-Rules to currentNode -> lookup: applyRules.plantuml
     end
 end
 E -> E: set currentNode[targetField] to targetValue
 E -> E: get FieldType from currentNode[targetField]
 alt Node has Children
-    alt FieldType directly changes total of node and isn't of Type 'total'
+    alt FieldType directly changes total or unitCost of node and isn't of Type 'total' or 'unitCost'
         E -> E: apply backward-Rules to currentNode -> lookup: applyRUles.plantuml
     end
-    E -> E: get desired_children_Total from 'total'-Field in currentNode
+    alt the changed FieldType is total, the fields unitCost and count are > 0 and the currentNode has children
+        E -> E: get total of attached, not yet updated variable and fixed children \n of currentNode (attaches fixedTotal and variableTotal)
+        E -> E: calculate share of new total from old total (old total calculated thorough children)
+        E -> E: multiply current unitCost with calculated share to adjust unitCost for distribution on children
+    end
+    E -> E: get desired_children_Price from 'unitCost'-Field in currentNode if 'unitCost'-Field doesn't exist, then use 'total'-Field
     E -> E: get current_children_Total of 'total'-Fields in children-Nodes before adjustment
     loop do for every child-Node
         E -> E: get child-NodeType
@@ -35,11 +40,11 @@ alt Node has Children
             E->E: go to next child in loop
         end
         E -> E: get current child_Total from 'total'-Field
-        E -> E: calculate new_child_Total = \n desired_children_Total * (current_children_Total/child_Total)
+        E -> E: calculate new_child_Total = \n desired_children_Price * (current_children_Total/child_Total)
         E -> E: ResolveBackwardNode(childNode, rules, targetField = 'total', new_child_Total)
     end
 end
-E->E: get total of updated attached children and parentNode of currentNode
+E->E: get total of updated attached variable and fixed children and parentNode \n of currentNode (attaches fixedTotal and variableTotal)
 E -> E: apply backward-Rules tu currentNode -> lookup: applyRUles.plantuml
 E --> Bridge: return {document {root: recalculated currentNode-tree}}
 Bridge -> Bridge: replace currentNode with new_currentNode-tree in document-tree

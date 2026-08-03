@@ -1,0 +1,61 @@
+{
+  "root": {
+    "id": "root",
+    "typeId": "invoice",
+    "label": "Auftrag",
+    "values": {},
+    "children": [
+      {
+        "id": "p2",
+        "typeId": "painting_room",
+        "label": "Wohnzimmer",
+        "values": { "length": 5, "width": 4, "unitCost": 10 },
+        "children": [
+          {
+            "id": "p2-m1",
+            "typeId": "material",
+            "label": "Farbe",
+            "values": { "count": 6, "unitCost": 20 },
+            "children": []
+          },
+          {
+            "id": "p2-l1",
+            "typeId": "labor",
+            "label": "Arbeit",
+            "values": { "count": 8, "unitCost": 20 },
+            "children": []
+          },
+          {
+            "id": "p2-t2",
+            "typeId": "travel",
+            "label": "Reisekosten",
+            "values": { "count": 10, "unitCost": 5 },
+            "children": []
+          },
+          {
+            "id": "p2-d1",
+            "typeId": "discount",
+            "label": "Rabatt",
+            "values": { "percentage": 15 },
+            "children": [
+              {
+                "id": "p2-d1-d1",
+                "typeId": "discount",
+                "label": "Rabatt-rabbatt",
+                "values": { "percentage": 15 },
+                "children": []
+              }
+            ]
+          },
+          {
+            "id": "p2-d2",
+            "typeId": "discount",
+            "label": "Rabatt",
+            "values": { "percentage": 15 },
+            "children": []
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,6 +1,7 @@
 export type Value = number | string | boolean | null;
 export type FieldKind = "number" | "string" | "boolean" | "percent";
 export type Mode = "forward" | "backward";
+type PositionType = "percentDiscount" | "fixedCost";
 
 /**
  * definition of a field of a PositionType with extra boolean flags for specific behavior
@@ -37,7 +38,7 @@ export interface PositionTypeDefinition {
   label: string;
   fields: FieldDefinition[];
   rules: RuleDefinition[];
-  isPercentDiscount?: boolean;
+  type?: PositionType;
 }
 
 /**
@@ -74,6 +75,7 @@ export class CostNode implements CostNodeView {
   values: Record<string, Value>;
   children: CostNode[];
   parent?: CostNode;
+  parentTotal?: number;
   constructor(
     id: string,
     typeId: string,
@@ -208,9 +210,28 @@ export function evaluateExpression(
  * @param node the parent-node to attach the total to
  * @returns the parent-node with the new children-total attached
  */
-function attachChildrenTotal(node: CostNode): CostNode {
+function attachChildrenTotal(
+  node: CostNode,
+  ruleSet: Map<string, PositionTypeDefinition>,
+): CostNode {
   node.values.childrenTotal = node.children.reduce(
     (sum, child) => sum + getNumeric(child.values, "total", 0),
+    0,
+  );
+  node.values.variableChildrenTotal = node.children.reduce(
+    (sum, child) =>
+      sum +
+      (ruleSet.get(child.typeId)?.type === "fixedCost"
+        ? 0
+        : getNumeric(child.values, "total", 0)),
+    0,
+  );
+  node.values.fixedChildrenTotal = node.children.reduce(
+    (sum, child) =>
+      sum +
+      (ruleSet.get(child.typeId)?.type === "fixedCost"
+        ? getNumeric(child.values, "total", 0)
+        : 0),
     0,
   );
   return node;
@@ -223,9 +244,20 @@ function attachChildrenTotal(node: CostNode): CostNode {
  */
 function attachParentTotal(node: CostNode): CostNode {
   if (node.parent) {
-    node.values.parentTotal = Math.abs(
-      getNumeric(node.parent.values, "total", 0),
-    );
+    // if parent has unitCost then percentage needs to be calculated to unitCost of parent instead of total
+    if (
+      getNumeric(node.parent.values, "unitCost", 0) > 0 &&
+      getNumeric(node.parent.values, "count", 0) > 0
+    ) {
+      node.values.parentTotal = Math.abs(
+        getNumeric(node.parent.values, "total", 0) /
+          getNumeric(node.parent.values, "count", 0),
+      );
+    } else {
+      node.values.parentTotal = Math.abs(
+        getNumeric(node.parent.values, "total", 0),
+      );
+    }
   }
   return node;
 }
@@ -289,7 +321,7 @@ function removeTotalFromDiscountNode(
   ruleSet: Map<string, PositionTypeDefinition>,
 ): CostNode {
   const typeDef = ruleSet.get(node.typeId);
-  if (typeDef?.isPercentDiscount) {
+  if (typeDef?.type === "percentDiscount") {
     node.values.total = 0;
     // remove the total from the children too
     node.children = node.children.map((child) =>
@@ -342,13 +374,13 @@ export function computeForward(
 
     // remove total and children from percentage-discount node -> shouldn't have children and total is only calculated at the end of computation
     // on first walk do nothing with percentage-discount
-    if (typeDef.isPercentDiscount) {
+    if (typeDef.type === "percentDiscount") {
       node = removeTotalFromDiscountNode(node, ruleSet);
       return node;
     }
     // always apply rules to children first because parent-nodes depend on children
     node.children = node.children.map(walk);
-    node = attachChildrenTotal(node);
+    node = attachChildrenTotal(node, ruleSet);
     node = applyRules(node, typeDef, "forward");
 
     // every node must have a total-field
@@ -364,23 +396,27 @@ export function computeForward(
     const typeDef = ruleSet.get(node.typeId);
     if (!typeDef) throw new Error(`Unknown typeId: ${node.typeId}`);
 
-    if (typeDef.isPercentDiscount && node.parent && node.parent.typeId) {
+    if (
+      typeDef.type === "percentDiscount" &&
+      node.parent &&
+      node.parent.typeId
+    ) {
       const parentTypeDef = ruleSet.get(node.parent!.typeId);
       if (!parentTypeDef)
         throw new Error(`Unknown typeId: ${node.parent!.typeId}`);
       // recalculate parent total to include previous discount
-      node.parent = attachChildrenTotal(node.parent!);
+      node.parent = attachChildrenTotal(node.parent, ruleSet);
       node.parent = applyRules(node.parent, parentTypeDef, "forward");
 
       // recalculate discount-node without children to get correct value
       node = attachParentTotal(node);
-      node = attachChildrenTotal(node);
+      node = attachChildrenTotal(node, ruleSet);
       node = applyRules(node, typeDef, "forward");
     }
 
     // apply rules to discount-children and recalculate node
     node.children = node.children.map(walkWithDiscount);
-    node = attachChildrenTotal(node);
+    node = attachChildrenTotal(node, ruleSet);
     node = applyRules(node, typeDef, "forward");
 
     return node;
@@ -411,13 +447,15 @@ function resolveBackwardNode(
   const typeDef = ruleSet.get(node.typeId);
   if (!typeDef) throw new Error(`Unknown typeId: ${node.typeId}`);
 
-  let parentTypeDef = node.parent ? ruleSet.get(node.parent!.typeId) : undefined;
-  if (typeDef.isPercentDiscount && node.parent && node.parent.typeId) {
+  let parentTypeDef = node.parent
+    ? ruleSet.get(node.parent!.typeId)
+    : undefined;
+  if (typeDef.type === "percentDiscount" && node.parent && node.parent.typeId) {
     if (!parentTypeDef)
       throw new Error(`Unknown typeId: ${node.parent!.typeId}`);
     for (let i = node.parent.children.length - 1; i >= 0; i--) {
       // if parent is percentage-discount remove total of child from parent
-      if (parentTypeDef.isPercentDiscount) {
+      if (parentTypeDef.type === "percentDiscount") {
         node.parent.values.total =
           getNumeric(node.parent.values, "total", 0) -
           getNumeric(node.parent.children[i].values, "total", 0);
@@ -434,11 +472,11 @@ function resolveBackwardNode(
 
     // don't recalculate parent total if parent is percentage-discount -> would be wrong because parent of parent hasn't been adjusted yet
     // parent of parent will only be correctly adjusted in forward-calculation
-    if (!parentTypeDef.isPercentDiscount) {
+    if (!(parentTypeDef.type === "percentDiscount")) {
       if (node.parent.parent) {
         node.parent = attachParentTotal(node.parent);
       }
-      node.parent = attachChildrenTotal(node.parent);
+      node.parent = attachChildrenTotal(node.parent, ruleSet);
       node.parent = applyRules(node.parent, parentTypeDef, "forward");
     }
   }
@@ -454,40 +492,70 @@ function resolveBackwardNode(
     !fieldDef?.fixed;
 
   if (canDistribute) {
-    // if value of field directly changes total of node on backward calculation (e.g. Unit price), apply rules before distributing total on children
-    // is necessary to correctly change total for current node and then distribute correct total on children
-    if (fieldDef?.backwardChangesTotal && fieldDef.id !== "total") {
+    // if value of field directly changes total or unitCost of node on backward calculation, apply rules before distributing total on children
+    // is necessary to correctly change total or unitCost for current node and then distribute correct total or unitCost on children
+    if (
+      fieldDef?.backwardChangesTotal &&
+      (fieldDef.id !== "total" || "unitCost")
+    ) {
       node = applyRules(node, typeDef, "backward");
     }
-    const desiredTotal = getNumeric(node.values, "total", 0);
+
+    // if backward adjusted field is total and node has a unitCost then unitCost must first be adjusted to new total according to share of old total
+    if (
+      fieldDef?.id === "total" &&
+      getNumeric(node.values, "unitCost", 0) > 0 &&
+      getNumeric(node.values, "count", 0) > 0 &&
+      node.children.length > 0
+    ) {
+      node = attachChildrenTotal(node, ruleSet);
+      const desiredTotal = getNumeric(node.values, "total", 0);
+      const variableTotalChildrenCurrent = node.values
+        .variableChildrenTotal as number;
+      const fixedTotalChildrenCurrent = node.values
+        .fixedChildrenTotal as number;
+      const unitCostCurrent = getNumeric(node.values, "unitCost", 0);
+      const count = getNumeric(node.values, "count", 0);
+      const share =
+        desiredTotal /
+        (count * variableTotalChildrenCurrent + fixedTotalChildrenCurrent); // newTotal/oldTotal
+      node.values.unitCost = share * unitCostCurrent;
+      // this all takes away a bit of the freedom of the implementer since it mandates exactly how count and unitCost need to be used
+      // there might be a more elgant way to do this, but this will do for now
+    }
+
+    // unitCost is the standard fieldId for the price per unit,
+    // if a node has a price per unit then distribution on children is not handeled over the total fild on backward calculation
+    const desiredPrice =
+      getNumeric(node.values, "unitCost", 0) > 0
+        ? getNumeric(node.values, "unitCost", 0)
+        : getNumeric(node.values, "total", 0);
     const totalChildrenCurrent = sumChildField(node.children, "total");
 
     if (totalChildrenCurrent > 0) {
-      // apply rules to children backward and evenly distribute new total of parent-node
+      // apply rules to children backward and evenly distribute new total or unitCost of parent-node
       node.children = node.children.map((child) => {
         const childDef = ruleSet.get(child.typeId);
         if (!childDef) throw new Error(`Unknown typeId: ${child.typeId}`);
-        // don't distribute total on percentage-discount-nodes
+        // don't distribute total or unitCost on percentage-discount-nodes
         // remove total from discount-nodes for proper backward-computation
         // reason: dicsount-nodes containing discount-nodes can't be easily computed backward
-        if (childDef.isPercentDiscount) {
+        if (childDef.type === "percentDiscount") {
           child.values.total = 0;
           return child;
         }
         const currentChildTarget = getNumeric(child.values, "total", 0);
 
-        // TODO: account for fixed cost-nodes when calculating share
-
         const share = currentChildTarget / totalChildrenCurrent;
-        const nextTarget = desiredTotal * share;
+        const nextTarget = desiredPrice * share;
         return resolveBackwardNode(child, ruleSet, "total", nextTarget);
       });
     }
   }
 
-  // after distributing total on children, apply backward-rules to current node
+  // after distributing total or unitCost on children, apply backward-rules to current node
   if (node.parent) node = attachParentTotal(node);
-  node = attachChildrenTotal(node);
+  node = attachChildrenTotal(node, ruleSet);
   node = applyRules(node, typeDef, "backward");
 
   return node;
@@ -585,7 +653,7 @@ export class CostEngine {
     field: FieldDefinition,
   ): boolean {
     if (field.kind !== "number") return false;
-    if (field.id === "total") return true;
+    if (field.id === "total" || field.id === "unitCost") return true; // changes to total and unitCost need to be resolved backward
     return this.canBackwardAdjust(node.typeId, field.id);
   }
 
@@ -702,7 +770,7 @@ export const exampleRuleSet: RuleSetDefinition = {
         {
           id: "invoice-total",
           targetField: "total",
-          expression: "childrenTotal",
+          expression: "childrenTotal > 0 ? childrenTotal : total",
         },
         {
           id: "invoice-total",
@@ -710,7 +778,7 @@ export const exampleRuleSet: RuleSetDefinition = {
           targetField: "total",
           expression: "childrenTotal",
           backwardTargetField: "total",
-          backwardExpression: "childrenTotal",
+          backwardExpression: "childrenTotal > 0 ? childrenTotal : total",
         },
       ],
     },
@@ -720,13 +788,12 @@ export const exampleRuleSet: RuleSetDefinition = {
       fields: [
         { id: "length", label: "Länge", kind: "number" },
         { id: "width", label: "Breite", kind: "number" },
-        { id: "area", label: "Fläche", kind: "number", computed: true },
+        { id: "count", label: "Fläche", kind: "number", computed: true },
         {
-          id: "pricePerSqm",
+          id: "unitCost",
           label: "Preis pro m²",
           kind: "number",
           computed: true,
-          backwardChangesTotal: true,
         },
         {
           id: "total",
@@ -736,32 +803,40 @@ export const exampleRuleSet: RuleSetDefinition = {
         },
       ],
       rules: [
-        { id: "paint-area", targetField: "area", expression: "length * width" },
         {
-          id: "paint-total",
-          targetField: "total",
-          expression: "childrenTotal",
+          id: "paint-area",
+          targetField: "count",
+          expression: "length * width",
         },
         {
           id: "price-per-sqm",
-          targetField: "pricePerSqm",
-          expression: "childrenTotal / area",
+          targetField: "unitCost",
+          expression: "childrenTotal > 0 ? childrenTotal : unitCost",
         },
         {
-          id: "paint-backward-price-per-sqm",
-          mode: "backward",
-          targetField: "pricePerSqm",
-          expression: "childrenTotal / area",
-          backwardTargetField: "total",
-          backwardExpression: "pricePerSqm * area",
+          id: "paint-total",
+          targetField: "total",
+          expression:
+            "childrenTotal > 0 ? variableChildrenTotal * count + fixedChildrenTotal : count * unitCost",
         },
         {
           id: "paint-backward-price",
           mode: "backward",
           targetField: "total",
-          expression: "area * pricePerSqm",
-          backwardTargetField: "pricePerSqm",
-          backwardExpression: "area > 0 ? total / area : 0",
+          expression:
+            "childrenTotal > 0 ? variableChildrenTotal * count + fixedChildrenTotal : count * unitCost",
+          backwardTargetField: "unitCost",
+          backwardExpression:
+            "childrenTotal > 0 ? childrenTotal : total / count",
+        },
+        {
+          id: "paint-backward-price-per-sqm",
+          mode: "backward",
+          targetField: "unitCost",
+          expression: "childrenTotal",
+          backwardTargetField: "total",
+          backwardExpression:
+            "childrenTotal > 0 ? variableChildrenTotal * count + fixedChildrenTotal : count * unitCost",
         },
       ],
     },
@@ -769,23 +844,40 @@ export const exampleRuleSet: RuleSetDefinition = {
       typeId: "material",
       label: "Material",
       fields: [
-        { id: "liters", label: "Liter", kind: "number", fixed: true },
-        { id: "pricePerLiter", label: "Preis pro Liter", kind: "number" },
+        { id: "count", label: "Liter", kind: "number", fixed: true },
+        { id: "unitCost", label: "Preis pro Liter", kind: "number" },
         { id: "total", label: "Gesamtpreis", kind: "number", computed: true },
       ],
       rules: [
         {
+          id: "material-price-per-liter",
+          targetField: "unitCost",
+          expression: "childrenTotal > 0 ? childrenTotal : unitCost",
+        },
+        {
           id: "material-total",
           targetField: "total",
-          expression: "liters * pricePerLiter",
+          expression:
+            "childrenTotal > 0 ? variableChildrenTotal * count + fixedChildrenTotal : count * unitCost",
         },
         {
           id: "material-backward-price",
           mode: "backward",
           targetField: "total",
-          expression: "liters * pricePerLiter",
-          backwardTargetField: "pricePerLiter",
-          backwardExpression: "liters > 0 ? total / liters : 0",
+          expression:
+            "count > 0 ? variableChildrenTotal * count + fixedChildrenTotal : 0",
+          backwardTargetField: "unitCost",
+          backwardExpression:
+            "childrenTotal > 0 ? childrenTotal : total / count",
+        },
+        {
+          id: "material-backward-price-per-liter",
+          mode: "backward",
+          targetField: "unitCost",
+          expression: "childrenTotal > 0 ? childrenTotal : unitCost",
+          backwardTargetField: "total",
+          backwardExpression:
+            "childrenTotal > 0 ? variableChildrenTotal * count + fixedChildrenTotal : count * unitCost",
         },
       ],
     },
@@ -793,21 +885,84 @@ export const exampleRuleSet: RuleSetDefinition = {
       typeId: "labor",
       label: "Arbeitszeit",
       fields: [
-        { id: "hours", label: "Stunden", kind: "number", fixed: true },
-        { id: "rate", label: "Stundensatz", kind: "number" },
+        { id: "count", label: "Stunden", kind: "number", fixed: true },
+        { id: "unitCost", label: "Stundensatz", kind: "number" },
         { id: "total", label: "Gesamtpreis", kind: "number", computed: true },
       ],
       rules: [
-        { id: "labor-total", targetField: "total", expression: "hours * rate" },
+        {
+          id: "labor-rate",
+          targetField: "unitCost",
+          expression: "childrenTotal > 0 ? childrenTotal : unitCost",
+        },
+        {
+          id: "labor-total",
+          targetField: "total",
+          expression:
+            "childrenTotal > 0 ? variableChildrenTotal * count + fixedChildrenTotal : count * unitCost",
+        },
+        {
+          id: "labor-backward-price",
+          mode: "backward",
+          targetField: "total",
+          expression:
+            "count > 0 ? variableChildrenTotal * count + fixedChildrenTotal : 0",
+          backwardTargetField: "unitCost",
+          backwardExpression:
+            "childrenTotal > 0 ? childrenTotal : total / count",
+        },
         {
           id: "labor-backward-rate",
           mode: "backward",
-          targetField: "total",
-          expression: "hours * rate",
-          backwardTargetField: "rate",
-          backwardExpression: "hours > 0 ? total / hours : 0",
+          targetField: "unitCost",
+          expression: "childrenTotal > 0 ? childrenTotal : unitCost",
+          backwardTargetField: "total",
+          backwardExpression:
+            "childrenTotal > 0 ? variableChildrenTotal * count + fixedChildrenTotal : count * unitCost",
         },
       ],
+    },
+    {
+      typeId: "travel",
+      label: "Reisekosten",
+      fields: [
+        { id: "count", label: "Kilometer", kind: "number", fixed: true },
+        { id: "unitCost", label: "Preis pro km", kind: "number" },
+        { id: "total", label: "Gesamtpreis", kind: "number", computed: true },
+      ],
+      rules: [
+        {
+          id: "travel-price-per-km",
+          targetField: "unitCost",
+          expression: "childrenTotal > 0 ? childrenTotal : unitCost",
+        },
+        {
+          id: "traavel-total",
+          targetField: "total",
+          expression:
+            "childrenTotal > 0 ? variableChildrenTotal * count + fixedChildrenTotal : count * unitCost",
+        },
+        {
+          id: "travel-backward-price",
+          mode: "backward",
+          targetField: "total",
+          expression:
+            "childrenTotal > 0 ? variableChildrenTotal * count + fixedChildrenTotal : count * unitCost",
+          backwardTargetField: "unitCost",
+          backwardExpression:
+            "childrenTotal > 0 ? childrenTotal : total / count",
+        },
+        {
+          id: "labor-backward-price-per-km",
+          mode: "backward",
+          targetField: "unitCost",
+          expression: "childrenTotal > 0 ? childrenTotal : unitCost",
+          backwardTargetField: "total",
+          backwardExpression:
+            "childrenTotal > 0 ? variableChildrenTotal * count + fixedChildrenTotal : count * unitCost",
+        },
+      ],
+      type: "fixedCost",
     },
     {
       typeId: "discount",
@@ -837,7 +992,7 @@ export const exampleRuleSet: RuleSetDefinition = {
             "parentTotal > 0 ? - total / parentTotal * 100 + childrenTotal : 0",
         },
       ],
-      isPercentDiscount: true,
+      type: "percentDiscount",
     },
   ],
 };
@@ -850,45 +1005,30 @@ export const exampleDocument: CostDocument = {
     values: {},
     children: [
       {
-        id: "p1",
-        typeId: "painting_room",
-        label: "Wohnzimmer",
-        values: { length: 5, width: 4, pricePerSqm: 12 },
-        children: [
-          {
-            id: "p1-m1",
-            typeId: "material",
-            label: "Farbe",
-            values: { liters: 6, pricePerLiter: 18 },
-            children: [],
-          },
-          {
-            id: "p1-l1",
-            typeId: "labor",
-            label: "Arbeit",
-            values: { hours: 8, rate: 35 },
-            children: [],
-          },
-        ],
-      },
-      {
         id: "p2",
         typeId: "painting_room",
         label: "Wohnzimmer",
-        values: { length: 5, width: 4, pricePerSqm: 12 },
+        values: { length: 5, width: 4, unitCost: 10 },
         children: [
           {
             id: "p2-m1",
             typeId: "material",
             label: "Farbe",
-            values: { liters: 6, pricePerLiter: 18 },
+            values: { count: 6, unitCost: 20 },
             children: [],
           },
           {
             id: "p2-l1",
             typeId: "labor",
             label: "Arbeit",
-            values: { hours: 8, rate: 35 },
+            values: { count: 8, unitCost: 20 },
+            children: [],
+          },
+          {
+            id: "p2-t2",
+            typeId: "travel",
+            label: "Reisekosten",
+            values: { count: 10, unitCost: 5 },
             children: [],
           },
           {
@@ -910,21 +1050,6 @@ export const exampleDocument: CostDocument = {
             id: "p2-d2",
             typeId: "discount",
             label: "Rabatt",
-            values: { percentage: 15 },
-            children: [],
-          },
-        ],
-      },
-      {
-        id: "p3",
-        typeId: "discount",
-        label: "Rabatt",
-        values: { percentage: 15 },
-        children: [
-          {
-            id: "p3-d1",
-            typeId: "discount",
-            label: "Rabatt-rabbatt",
             values: { percentage: 15 },
             children: [],
           },
