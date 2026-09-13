@@ -1,0 +1,270 @@
+@startuml
+title Dokumentmodell – Klassendiagramm
+
+skinparam classAttributeIconSize 0
+skinparam linetype ortho
+
+' =========================================================
+' Dokument / Baum
+' =========================================================
+
+class Doc {
+    +root: DocNode
+    +currentState: DocState
+    +nodeTypes: Map<String, NodeType>
+    --
+    +findNodeById(id: string): DocNode
+    +handleState(node: DocNode, field: FieldDefinition, value: number)
+    +updateTreeForFieldChange(tree: Doc, nodeId: string, fieldId: string, value: number)
+    +attachParents(node: DocNode, parent?: DocNode): DocNode
+    +convertCostNodeToDocNode(node: CostNodeView): DocNode
+    +convertDocNodeToCostNode(docNode: DocNode): CostNodeView
+}
+
+note right of Doc
+  **Aggregate Root / zentrale Orchestrierung**
+
+  Verantwortlich für:
+  - Dokumentbaum
+  - aktuellen Zustand
+  - NodeType-Registry
+  - State-Transitions
+  - Konvertierung der Views
+end note
+
+
+class DocNode {
+    +id: string
+    +type: NodeType
+    +children: DocNode[]
+    +parent?: DocNode
+    --
+    +addchild(child: DocNode)
+}
+
+note right of DocNode
+  Knoten des Dokumentbaums.
+
+  parent + children bilden
+  einen bidirektionalen Baum.
+end note
+
+
+Doc "1" *-- "1" DocNode : root
+DocNode "1" *-- "0..*" DocNode : children
+DocNode "0..1" --> "1" DocNode : parent
+DocNode "*" --> "1" NodeType : type
+
+
+' =========================================================
+' Node Types / Fields / Rules
+' =========================================================
+
+abstract class NodeType {
+    +typeId: string
+    +lable: string
+    {static} #defaultFields: FieldDefinition[]
+    +fields: FieldDefinition[]
+    +rules: Rule[]
+    --
+    #getDefaultFields(): FieldDefinition[]
+    +evaluateRules(doc: Doc)
+}
+
+note right of NodeType
+  Abstrakte Definition eines
+  Knotentyps.
+
+  Enthält:
+  - Felder
+  - Regeln
+  - Standardfelder
+end note
+
+
+class FieldDefinition {
+    +id: string
+    +value: number
+    --
+    +setValue(value: number)
+}
+
+note right of FieldDefinition
+  Definition eines numerischen
+  Feldes inklusive aktuellem Wert.
+end note
+
+
+class Rule {
+    +id: string
+    +expression: string
+    +fieldId: string
+    +docState: DocState
+    --
+    +evaluate(doc: Doc, node: NodeType)
+    +evaluateExpression(expression: string, fields: FieldDefinition[]): number
+}
+
+note right of Rule
+  Berechnungsregel.
+
+  Beispiel:
+  "price * quantity"
+
+  Die Regel wird nur ausgeführt,
+  wenn der aktuelle DocState
+  dem docState der Regel entspricht.
+end note
+
+
+NodeType "1" *-- "0..*" FieldDefinition : fields
+NodeType "1" *-- "0..*" Rule : rules
+Rule "*" --> "1" DocState : active in
+
+
+' =========================================================
+' State Machine
+' =========================================================
+
+class DocState {
+    +id: string
+    +commands: Command[]
+    +transitions: Transition[]
+    --
+    +addCommand(command: Command)
+    +addTransition(transition: Transition)
+    +executeCommands(
+        doc: Doc,
+        node: DocNode,
+        field: FieldDefinition,
+        value: number
+    )
+}
+
+note right of DocState
+  Zustand der Dokument-State-Machine.
+
+  Ein State besitzt:
+  - Commands
+  - mögliche Transitions
+end note
+
+
+class Command {
+    +execute: Function
+    --
+    +constructor(execute: Function)
+}
+
+note right of Command
+  Auszuführende Aktion.
+
+  Command erhält:
+  Doc, DocNode,
+  FieldDefinition und Wert.
+end note
+
+
+class Transition {
+    +targetState: DocState
+    +condition: Function
+    --
+    +constructor(
+        targetState: DocState,
+        condition: Function
+    )
+}
+
+note right of Transition
+  Beschreibt einen möglichen
+  Zustandswechsel.
+
+  Wenn condition() == true,
+  wird targetState aktiviert.
+end note
+
+
+Doc "1" --> "1" DocState : currentState
+DocState "1" *-- "0..*" Command : commands
+DocState "1" *-- "0..*" Transition : transitions
+Transition "*" --> "1" DocState : targetState
+
+
+' =========================================================
+' View / DTO
+' =========================================================
+
+interface CostNodeView {
+    +id: string
+    +typeId: string
+    +label: string
+    +values: Record<string, number>
+    +children: CostNodeView[]
+}
+
+note right of CostNodeView
+  DTO / View-Modell.
+
+  Vereinfachte Darstellung
+  eines DocNode für externe
+  Darstellung bzw. Übergabe.
+end note
+
+
+CostNodeView "1" *-- "0..*" CostNodeView : children
+
+Doc ..> CostNodeView : converts to/from
+
+
+' =========================================================
+' Method Dependencies
+' =========================================================
+
+Doc ..> DocNode : searches / modifies
+Doc ..> FieldDefinition : uses
+Doc ..> NodeType : registry
+DocState ..> Doc : executes on
+Command ..> Doc : modifies
+Command ..> DocNode : modifies
+Command ..> FieldDefinition : uses
+Rule ..> FieldDefinition : evaluates
+
+
+' =========================================================
+' Architektur-Notizen
+' =========================================================
+
+' note "Document Tree" as N1
+'   Doc
+'    |
+'    +-- DocNode
+'         |
+'         +-- children
+'         +-- parent
+'         +-- NodeType
+' end note
+
+' note "State Machine" as N2
+'   Doc
+'    |
+'    +-- currentState
+'         |
+'         +-- Command[]
+'         +-- Transition[]
+' end note
+
+' note "Rules / Calculations" as N3
+'   NodeType
+'    |
+'    +-- FieldDefinition[]
+'    +-- Rule[]
+'         |
+'         +-- expression
+'         +-- DocState
+' end note
+
+' note "DTO / Mapping" as N4
+'   DocNode <--> CostNodeView
+' end note
+
+@enduml

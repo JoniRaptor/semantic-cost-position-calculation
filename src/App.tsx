@@ -1,17 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EditorState, Plugin } from "prosemirror-state";
 import { EditorView } from "prosemirror-view";
-import {
-  CostEngine,
-  CostDocument,
-  CostNodeView,
-  RuleSetDefinition,
-} from "./semantic/engine";
 import { costSchema } from "./pm/schema";
 import { CostItemView } from "./pm/costNodeView";
 import { Node } from "prosemirror-model";
-import exampleRuleSet from "./exampleJSON/exampleRuleSet.json";
 import exampleDocument from "./exampleJSON/exampleDocument.json";
+import {
+  CostNodeView,
+  CostDocument,
+  exampleDoc,
+} from "./semantic/stateMachine";
 
 function buildPmDocFromCostNode(node: CostNodeView): Node {
   return costSchema.node("doc", null, [buildCostItemNode(node)]);
@@ -46,19 +44,22 @@ function pmDocToSemanticTree(doc: EditorState["doc"]): CostDocument {
   return { root: walk(root) };
 }
 
+const document = exampleDocument as unknown as CostDocument;
+const doc = exampleDoc;
+doc.setRoot(doc.convertCostNodeToDocNode(document.root));
+doc.attachParents(doc.root);
 export default function App() {
-  const ruleSet = exampleRuleSet as RuleSetDefinition;
-  const document = exampleDocument as unknown as CostDocument;
-  const engine = useMemo(() => new CostEngine(ruleSet), []);
-  const fieldDefsByType = useMemo(
-    () => new Map(ruleSet.positionTypes.map((t) => [t.typeId, t])),
-    [],
-  );
+  const NodeTypes = useMemo(() => doc.getNodeTypesMap(), []);
   const editorRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const applyingRef = useRef(false);
+
+  // Forward calculation to make sure the document adheres to rules
   const [summary, setSummary] = useState<CostDocument>(
-    () => engine.forward(document).document,
+    () => { 
+      doc.currentState.executeCommands(doc, doc.root, doc.root.type.fields[0], doc.root.type.fields[0].value)
+      return { root: doc.convertDocNodeToCostNode(doc.root) } 
+    },
   );
 
   const renderDocument = (document: CostDocument) => {
@@ -82,11 +83,13 @@ export default function App() {
   useEffect(() => {
     if (!editorRef.current) return;
 
-    const document = exampleDocument as unknown as CostDocument;
-    const startDocument = engine.forward(document).document;
+    // const document = exampleDocument as unknown as CostDocument;
+    doc.currentState.executeCommands(doc, doc.root, doc.root.type.fields[0], doc.root.type.fields[0].value);
+    const startRoot = doc.convertDocNodeToCostNode(doc.root);
+    const startDocument = { root: startRoot };
     const state = EditorState.create({
       schema: costSchema,
-      doc: buildPmDocFromCostNode(startDocument.root),
+      doc: buildPmDocFromCostNode(startRoot),
       plugins: [
         new Plugin({
           props: {
@@ -96,18 +99,19 @@ export default function App() {
                   node,
                   view,
                   getPos as () => number,
-                  fieldDefsByType,
+                  NodeTypes,
                   (nodeId, field, raw) => {
                     const currentView = viewRef.current;
                     if (!currentView) return;
 
-                    const semantic = pmDocToSemanticTree(currentView.state.doc);
-                    const nextDocument = engine.updateTreeForFieldChange(
-                      semantic,
+                    // const semantic = pmDocToSemanticTree(currentView.state.doc);
+                    const nextRoot = doc.convertDocNodeToCostNode(doc.updateTreeForFieldChange(
+                      doc,
                       nodeId,
                       field,
-                      raw,
-                    );
+                      parseFloat(raw),
+                    ));
+                    const nextDocument = { root: nextRoot };
                     renderDocument(nextDocument);
                   },
                 );
@@ -133,22 +137,7 @@ export default function App() {
       view.destroy();
       viewRef.current = null;
     };
-  }, [engine, fieldDefsByType]);
-
-  const rerunForward = () => {
-    const view = viewRef.current;
-    if (!view) return;
-    const semantic = pmDocToSemanticTree(view.state.doc);
-    renderDocument(engine.forward(semantic).document);
-  };
-
-  const runBackwardOnRoot = () => {
-    const view = viewRef.current;
-    if (!view) return;
-    const semantic = pmDocToSemanticTree(view.state.doc);
-    const next = engine.backward(semantic, "total", 200).document;
-    renderDocument(next);
-  };
+  }, [doc, NodeTypes]);
 
   return (
     <div className="app-shell">
@@ -158,11 +147,6 @@ export default function App() {
           ProseMirror zeigt nur den Baum an. Die Berechnung läuft in einer
           separaten TypeScript-Engine.
         </p>
-
-        <div className="button-row">
-          <button onClick={rerunForward}>Vorwärts neu berechnen</button>
-          <button onClick={runBackwardOnRoot}>Rückwärts: Root = 200</button>
-        </div>
 
         <h2>Aktuelles Dokument</h2>
         <pre>{JSON.stringify(summary, null, 2)}</pre>

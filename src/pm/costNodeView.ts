@@ -1,6 +1,6 @@
 import { Node as PMNode } from "prosemirror-model";
 import { EditorView, NodeView } from "prosemirror-view";
-import { FieldDefinition, PositionTypeDefinition } from "../semantic/engine";
+import { FieldDefinition, NodeType } from "../semantic/stateMachine";
 
 type UpdateValue = (
   nodeId: string,
@@ -10,7 +10,7 @@ type UpdateValue = (
 
 function getFieldDefs(
   node: PMNode,
-  types: Map<string, PositionTypeDefinition>,
+  types: Map<string, NodeType>,
 ): FieldDefinition[] {
   const typeDef = types.get(node.attrs.typeId as string);
   return typeDef?.fields ?? [];
@@ -31,7 +31,7 @@ export class CostItemView implements NodeView {
 
   getPos: () => number;
 
-  private readonly types: Map<string, PositionTypeDefinition>;
+  private readonly types: Map<string, NodeType>;
 
   private readonly onFieldChange: UpdateValue;
 
@@ -39,7 +39,7 @@ export class CostItemView implements NodeView {
     node: PMNode,
     view: EditorView,
     getPos: () => number,
-    types: Map<string, PositionTypeDefinition>,
+    types: Map<string, NodeType>,
     onFieldChange: UpdateValue,
   ) {
     this.node = node;
@@ -60,24 +60,15 @@ export class CostItemView implements NodeView {
     wrapper.className = "field";
 
     const label = document.createElement("span");
-    label.textContent =
-      field.label +
-      (field.fixed ? " (fix)" : field.computed ? " (berechnet)" : "");
+    label.textContent = field.label;
     wrapper.appendChild(label);
 
     const input = document.createElement("input");
-    input.type = field.kind === "number" ? "number" : "text";
-    input.step = field.kind === "number" ? "0.01" : "any";
+    input.type = "number";
+    input.step = "0.01";
     input.value = renderValue(
       (this.node.attrs.values as Record<string, unknown>)[field.id],
     );
-
-    if (field.computed) {
-      input.classList.add("computed-field");
-    }
-    if (field.fixed) {
-      input.classList.add("fixed-field");
-    }
 
     const commit = () => {
       this.onFieldChange(this.node.attrs.id as string, field, input.value);
