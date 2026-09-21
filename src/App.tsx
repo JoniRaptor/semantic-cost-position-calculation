@@ -57,7 +57,7 @@ export default function App() {
   // Forward calculation to make sure the document adheres to rules
   const [summary, setSummary] = useState<CostDocument>(
     () => { 
-      doc.currentState.executeCommands(doc, doc.root, doc.root.type.fields[0], doc.root.type.fields[0].value)
+      doc.currentState.executeNetworks(doc, doc.root, doc.root.type.fields[0], doc.root.type.fields[0].value)
       return { root: doc.convertDocNodeToCostNode(doc.root) } 
     },
   );
@@ -84,7 +84,7 @@ export default function App() {
     if (!editorRef.current) return;
 
     // const document = exampleDocument as unknown as CostDocument;
-    doc.currentState.executeCommands(doc, doc.root, doc.root.type.fields[0], doc.root.type.fields[0].value);
+    doc.currentState.executeNetworks(doc, doc.root, doc.root.type.fields[0], doc.root.type.fields[0].value);
     const startRoot = doc.convertDocNodeToCostNode(doc.root);
     const startDocument = { root: startRoot };
     const state = EditorState.create({

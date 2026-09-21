@@ -5,7 +5,7 @@ class Doc {
 
   constructor(
     root: DocNode,
-    currentState: DocState,
+    currentState: DocState, // simply for checking next Transition conditions
     nodeTypes: Map<string, NodeType>,
   ) {
     this.root = root;
@@ -33,11 +33,11 @@ class Doc {
         // change state
         this.currentState = transition.targetState;
         // execute commands
-        this.currentState.executeCommands(this, node, field, value);
+        this.currentState.executeNetworks(this, node, field, value);
         return this.root;
       }
     }
-    this.currentState.executeCommands(this, node, field, value);
+    this.currentState.executeNetworks(this, node, field, value);
     return this.root;
   }
 
@@ -150,41 +150,49 @@ class DocNode {
 
 class DocState {
   id: string;
-  commands: Command[];
+  dependencyNetworks: {
+    startAt: "root" | "changedNode";
+    network: StepDependencyNetwork;
+  }[];
   transitions: Transition[];
 
   constructor(id: string) {
     this.id = id;
-    this.commands = [];
+    this.dependencyNetworks = [];
     this.transitions = [];
   }
 
-  addCommand(command: Command) {
-    this.commands.push(command);
+  addNetwork(dependencyNetwork: {
+    startAt: "root" | "changedNode";
+    network: StepDependencyNetwork;
+  }) {
+    this.dependencyNetworks.push(dependencyNetwork);
   }
 
   addTransition(transition: Transition) {
     this.transitions.push(transition);
   }
 
-  executeCommands(
+  executeNetworks(
     doc: Doc,
     node: DocNode,
     field: FieldDefinition,
     value: number,
   ) {
-    for (const command of this.commands) {
-      command.execute(doc, node, field, value);
+    for (const entry of this.dependencyNetworks) {
+      const startNode = entry.startAt === "root" ? doc.root : node;
+      entry.network.run(doc, startNode, field, value); // initial entry is root or changed node, works downward from there
     }
   }
 }
 
-class Command {
+class NetworkStep {
   execute: (
     doc: Doc,
     node: DocNode,
     field: FieldDefinition,
     value: number,
+    network?: StepDependencyNetwork,
   ) => void;
 
   constructor(
@@ -193,9 +201,457 @@ class Command {
       node: DocNode,
       field: FieldDefinition,
       value: number,
+      network?: StepDependencyNetwork,
     ) => void,
   ) {
     this.execute = execute;
+  }
+}
+
+type Operator = "sum" | "min" | "max" | "count";
+
+class AggregateChildrenFieldStep extends NetworkStep {
+  childSourceField: FieldDefinition;
+  targetField: FieldDefinition;
+  operator: Operator;
+  allowedTypes: (typeof NodeType)[];
+  allowedChildTypes: (typeof NodeType)[];
+
+  constructor(
+    childSourceField: FieldDefinition,
+    targetField: FieldDefinition,
+    operator: Operator,
+    allowedTypes: (typeof NodeType)[] = [],
+    allowedChildTypes: (typeof NodeType)[] = [],
+  ) {
+    super((doc: Doc, node: DocNode, field: FieldDefinition, value: number) => {
+      if (
+        allowedTypes.includes(node.type.constructor as typeof NodeType) &&
+        node.type.fields.find((f) => f.id === targetField.id)
+      ) {
+        let aggregatedValue = 0;
+        let initialized = false;
+        switch (operator) {
+          case "sum":
+            for (const child of node.children) {
+              if (
+                allowedChildTypes.includes(
+                  child.type.constructor as typeof NodeType,
+                )
+              ) {
+                aggregatedValue +=
+                  child.type.fields.find((f) => f.id === childSourceField.id)
+                    ?.value ?? 0;
+              }
+            }
+            break;
+          case "min":
+            for (const child of node.children) {
+              if (
+                allowedChildTypes.includes(
+                  child.type.constructor as typeof NodeType,
+                )
+              ) {
+                if (!initialized) {
+                  aggregatedValue =
+                    child.type.fields.find((f) => f.id === childSourceField.id)
+                      ?.value ?? 0;
+                  initialized = true;
+                } else {
+                  aggregatedValue = Math.min(
+                    aggregatedValue,
+                    child.type.fields.find((f) => f.id === childSourceField.id)
+                      ?.value ?? aggregatedValue + 1,
+                  );
+                }
+              }
+            }
+            break;
+          case "max":
+            for (const child of node.children) {
+              if (
+                allowedChildTypes.includes(
+                  child.type.constructor as typeof NodeType,
+                )
+              ) {
+                if (!initialized) {
+                  aggregatedValue =
+                    child.type.fields.find((f) => f.id === childSourceField.id)
+                      ?.value ?? 0;
+                  initialized = true;
+                } else {
+                  aggregatedValue = Math.max(
+                    aggregatedValue,
+                    child.type.fields.find((f) => f.id === childSourceField.id)
+                      ?.value ?? aggregatedValue - 1,
+                  );
+                }
+              }
+            }
+            break;
+          case "count":
+            for (const child of node.children) {
+              if (
+                allowedChildTypes.includes(
+                  child.type.constructor as typeof NodeType,
+                ) &&
+                child.type.fields.find((f) => f.id === childSourceField.id)
+              ) {
+                aggregatedValue += 1;
+              }
+            }
+            break;
+        }
+        node.type.fields
+          .find((f) => f.id === targetField.id)
+          ?.setValue(aggregatedValue);
+      }
+    });
+    this.childSourceField = childSourceField;
+    this.targetField = targetField;
+    this.operator = operator;
+    this.allowedTypes = allowedTypes;
+    this.allowedChildTypes = allowedChildTypes;
+  }
+}
+
+class AggregateChildrenFieldToParentStep extends NetworkStep {
+  childSourceField: FieldDefinition;
+  parentTargetField: FieldDefinition;
+  operator: Operator;
+  allowedParentTypes: (typeof NodeType)[];
+  allowedChildTypes: (typeof NodeType)[];
+
+  constructor(
+    childSourceField: FieldDefinition,
+    parentTargetField: FieldDefinition,
+    operator: Operator,
+    allowedParentTypes: (typeof NodeType)[] = [],
+    allowedChildTypes: (typeof NodeType)[] = [],
+  ) {
+    super((doc: Doc, node: DocNode, field: FieldDefinition, value: number) => {
+      if (
+        node.parent &&
+        allowedParentTypes.includes(
+          node.parent.type.constructor as typeof NodeType,
+        ) &&
+        node.parent.type.fields.find((f) => f.id === parentTargetField.id)
+      ) {
+        let aggregatedValue = 0;
+        let initialized = false;
+        switch (operator) {
+          case "sum":
+            for (const child of node.parent.children) {
+              if (
+                allowedChildTypes.includes(
+                  child.type.constructor as typeof NodeType,
+                ) &&
+                child.type.fields.find((f) => f.id === childSourceField.id)
+              ) {
+                aggregatedValue +=
+                  child.type.fields.find((f) => f.id === childSourceField.id)
+                    ?.value ?? 0;
+              }
+            }
+            break;
+          case "min":
+            for (const child of node.parent.children) {
+              if (
+                allowedChildTypes.includes(
+                  child.type.constructor as typeof NodeType,
+                ) &&
+                child.type.fields.find((f) => f.id === childSourceField.id)
+              ) {
+                if (!initialized) {
+                  aggregatedValue =
+                    child.type.fields.find((f) => f.id === childSourceField.id)
+                      ?.value ?? 0;
+                  initialized = true;
+                } else {
+                  aggregatedValue = Math.min(
+                    aggregatedValue,
+                    child.type.fields.find((f) => f.id === childSourceField.id)
+                      ?.value ?? aggregatedValue + 1,
+                  );
+                }
+              }
+            }
+            break;
+          case "max":
+            for (const child of node.parent.children) {
+              if (
+                allowedChildTypes.includes(
+                  child.type.constructor as typeof NodeType,
+                ) &&
+                child.type.fields.find((f) => f.id === childSourceField.id)
+              ) {
+                if (!initialized) {
+                  aggregatedValue =
+                    child.type.fields.find((f) => f.id === childSourceField.id)
+                      ?.value ?? 0;
+                  initialized = true;
+                } else {
+                  aggregatedValue = Math.max(
+                    aggregatedValue,
+                    child.type.fields.find((f) => f.id === childSourceField.id)
+                      ?.value ?? aggregatedValue - 1,
+                  );
+                }
+              }
+            }
+            break;
+          case "count":
+            for (const child of node.parent.children) {
+              if (
+                allowedChildTypes.includes(
+                  child.type.constructor as typeof NodeType,
+                ) &&
+                child.type.fields.find((f) => f.id === childSourceField.id)
+                  ?.value
+              ) {
+                aggregatedValue += 1;
+              }
+            }
+            break;
+        }
+        node.parent.type.fields
+          .find((f) => f.id === parentTargetField.id)
+          ?.setValue(aggregatedValue);
+      }
+    });
+    this.childSourceField = childSourceField;
+    this.parentTargetField = parentTargetField;
+    this.operator = operator;
+    this.allowedParentTypes = allowedParentTypes;
+    this.allowedChildTypes = allowedChildTypes;
+  }
+}
+
+class AttachFieldStep extends NetworkStep {
+  sourceField: FieldDefinition;
+  targetField: FieldDefinition;
+  allowedTypes: (typeof NodeType)[];
+
+  constructor(
+    sourceField: FieldDefinition,
+    targetField: FieldDefinition,
+    allowedTypes: (typeof NodeType)[],
+  ) {
+    super((doc: Doc, node: DocNode, field: FieldDefinition, value: number) => {
+      if (
+        node.type.fields.find((f) => f.id === sourceField.id) &&
+        node.type.fields.find((f) => f.id === targetField.id) &&
+        allowedTypes.includes(node.type.constructor as typeof NodeType)
+      ) {
+        node.type.fields
+          .find((f) => f.id === targetField.id)
+          ?.setValue(
+            node.type.fields.find((f) => f.id === sourceField.id)?.value ?? 0,
+          );
+      }
+    });
+
+    this.sourceField = sourceField;
+    this.targetField = targetField;
+    this.allowedTypes = allowedTypes;
+  }
+}
+
+class AttachParentFieldStep extends NetworkStep {
+  sourceField: FieldDefinition;
+  targetField: FieldDefinition;
+  allowedTypes: (typeof NodeType)[];
+  allowedParentTypes: (typeof NodeType)[];
+
+  constructor(
+    sourceField: FieldDefinition,
+    targetField: FieldDefinition,
+    allowedTypes: (typeof NodeType)[],
+    allowedParentTypes: (typeof NodeType)[],
+  ) {
+    super((doc: Doc, node: DocNode, field: FieldDefinition, value: number) => {
+      if (
+        node.parent &&
+        node.type.fields.find((f) => f.id === targetField.id) &&
+        node.parent.type.fields.find((f) => f.id === sourceField.id) &&
+        allowedTypes.includes(node.type.constructor as typeof NodeType) &&
+        allowedParentTypes.includes(
+          node.parent.type.constructor as typeof NodeType,
+        )
+      ) {
+        node.type.fields
+          .find((f) => f.id === targetField.id)
+          ?.setValue(
+            node.parent.type.fields.find((f) => f.id === sourceField.id)
+              ?.value ?? 0,
+          );
+      }
+    });
+    this.sourceField = sourceField;
+    this.targetField = targetField;
+    this.allowedTypes = allowedTypes;
+    this.allowedParentTypes = allowedParentTypes;
+  }
+}
+
+class DistributeProportionalOnChildrenStep extends NetworkStep {
+  sourceField: FieldDefinition;
+  targetField: FieldDefinition;
+  nodeTypes: (typeof NodeType)[];
+  childTypes: (typeof NodeType)[];
+
+  constructor(
+    sourceField: FieldDefinition,
+    targetField: FieldDefinition,
+    nodeTypes: (typeof NodeType)[],
+    childTypes: (typeof NodeType)[],
+  ) {
+    super((doc: Doc, node: DocNode, field: FieldDefinition, value: number) => {
+      if (!nodeTypes.includes(node.type.constructor as typeof NodeType)) return;
+
+      const targetValue =
+        node.type.fields.find((f) => f.id === sourceField.id)?.value ?? 0;
+
+      let childrenValue = 0;
+      for (const child of node.children) {
+        if (!childTypes.includes(child.type.constructor as typeof NodeType))
+          continue;
+        childrenValue +=
+          child.type.fields.find((f) => f.id === targetField.id)?.value ?? 0;
+      }
+
+      if (childrenValue > 0) {
+        node.children.map((child) => {
+          if (!childTypes.includes(child.type.constructor as typeof NodeType))
+            return child;
+          const childValue =
+            child.type.fields.find((f) => f.id === targetField.id)?.value ?? 0;
+
+          const childTargetValue = (childValue / childrenValue) * targetValue;
+
+          child.type.fields
+            .find((f) => f.id === targetField.id)
+            ?.setValue(childTargetValue);
+        });
+      }
+    });
+    this.sourceField = sourceField;
+    this.targetField = targetField;
+    this.nodeTypes = nodeTypes;
+    this.childTypes = childTypes;
+  }
+}
+
+class ZeroSubTreeStep extends NetworkStep {
+  targetField: FieldDefinition;
+  types: (typeof NodeType)[];
+
+  constructor(targetField: FieldDefinition, types: (typeof NodeType)[]) {
+    super((doc: Doc, node: DocNode, field: FieldDefinition, value: number) => {
+      if (types.includes(node.type.constructor as typeof NodeType)) {
+        node.type.fields.find((f) => f.id === targetField.id)?.setValue(0);
+        node.children.map((child) => {
+          this.execute(doc, child, field, value);
+        });
+      }
+    });
+    this.targetField = targetField;
+    this.types = types;
+  }
+}
+
+class EvaluateRulesStep extends NetworkStep {
+  constructor() {
+    super(
+      (
+        doc: Doc,
+        node: DocNode,
+        field: FieldDefinition,
+        value: number,
+        network?: StepDependencyNetwork,
+      ) => {
+        if (!network) throw new Error("Network is not defined");
+        node.type.evaluateRules(network.networkState, field);
+      },
+    );
+  }
+}
+
+class EvaluateParentRulesStep extends NetworkStep {
+  constructor() {
+    super(
+      (
+        doc: Doc,
+        node: DocNode,
+        field: FieldDefinition,
+        value: number,
+        network?: StepDependencyNetwork,
+      ) => {
+        if (!network) throw new Error("Network is not defined");
+        node.parent?.type.evaluateRules(network.networkState, field);
+      },
+    );
+  }
+}
+
+class SetNewFieldValueStep extends NetworkStep {
+  constructor() {
+    super((doc: Doc, node: DocNode, field: FieldDefinition, value: number) => {
+      node.type.fields.find((f) => f.id === field.id)?.setValue(value);
+    });
+  }
+}
+
+class ReapeatNetworkForChildrenStep extends NetworkStep {
+  targetField: FieldDefinition;
+  constructor(targetField: FieldDefinition) {
+    super(
+      (
+        doc: Doc,
+        node: DocNode,
+        field: FieldDefinition,
+        value: number,
+        network?: StepDependencyNetwork,
+      ) => {
+        if (!network) throw new Error("Network is not defined");
+        for (const child of node.children) {
+          if (child.type.fields.find((f) => f.id === targetField.id)) {
+            const targetValue =
+              child.type.fields.find((f) => f.id === targetField.id)?.value ??
+              0;
+            network.run(doc, child, targetField, targetValue);
+          } else {
+            const targetValue =
+              child.type.fields.find((f) => f.id === field.id)?.value ?? 0;
+            network.run(doc, child, field, targetValue);
+          }
+        }
+      },
+    );
+    this.targetField = targetField;
+  }
+}
+
+class StepDependencyNetwork {
+  protected readonly nodeTypeSteps: Map<(typeof NodeType)[], NetworkStep[]>;
+  readonly networkState: DocState; // used to use rules from different DocStates without changing current DocState
+
+  constructor(
+    nodeTypeSteps: Map<(typeof NodeType)[], NetworkStep[]>,
+    docState: DocState,
+  ) {
+    this.nodeTypeSteps = nodeTypeSteps;
+    this.networkState = docState;
+  }
+
+  run(doc: Doc, node: DocNode, field: FieldDefinition, value: number) {
+    for (const entry of this.nodeTypeSteps) {
+      if (entry[0].includes(node.type.constructor as typeof NodeType)) {
+        for (const step of entry[1]) {
+          step.execute(doc, node, field, value, this);
+        }
+      }
+    }
   }
 }
 
@@ -260,12 +716,12 @@ export abstract class NodeType {
   canAddChild(nodeType: NodeType): boolean {
     return (this.constructor as typeof NodeType).allowedChildTypes.some(
       (childType) => childType === nodeType.constructor,
-    )
+    );
   }
 
-  evaluateRules(doc: Doc, field: FieldDefinition) {
+  evaluateRules(docState: DocState, field: FieldDefinition) {
     for (const rule of this.rules) {
-      rule.evaluate(doc, this, field);
+      rule.evaluate(docState, this, field);
     }
   }
 
@@ -288,7 +744,8 @@ export abstract class NodeType {
       (f) => new FieldDefinition(f.id, f.value, f.label),
     );
     clone.rules = this.rules.map(
-      (r) => new Rule(r.id, r.expression, r.fieldId, r.docState, r.triggerFieldId),
+      (r) =>
+        new Rule(r.id, r.expression, r.fieldId, r.docState, r.triggerFieldId),
     );
     return clone;
   }
@@ -333,21 +790,36 @@ class Rule {
     this.triggerFieldId = triggerFieldId;
   }
 
-  evaluate(doc: Doc, node: NodeType, changedField: FieldDefinition) {
-    if (doc.currentState !== this.docState) return;
-    if (this.triggerFieldId && this.triggerFieldId !== '' && this.triggerFieldId !== "" && changedField.id !== this.triggerFieldId) return;
+  evaluate(docState: DocState, node: NodeType, changedField: FieldDefinition) {
+    if (docState !== this.docState) return;
+    if (
+      this.triggerFieldId &&
+      this.triggerFieldId !== "" &&
+      changedField.id !== this.triggerFieldId
+    )
+      return;
     const value = this.evaluateExpression(this.expression, node.fields);
     node.fields.find((f) => f.id === this.fieldId)?.setValue(value);
   }
 
   evaluateExpression(expression: string, fields: FieldDefinition[]): number {
+    const missing = new Set<String>();
     const prepared = expression.replace(
-      /\b[a-zA-Z_][a-zA-Z0-9_]*\b/g,
+      /\b[a-zA-Z_][a-zA-Z0-9_]*\b(?!\s*\()/g,
       (name) => {
-        return String(fields.find((f) => f.id === name)?.value || 0);
+        const field = fields.find((f) => f.id === name);
+        if (!field) missing.add(name);
+        return String(field?.value || 0);
       },
     );
-    const result = Function(`"use strict"; return (${prepared});`)();
+    if (missing.size > 0)
+      throw new Error(
+        `Rule "${this.id}" for field "${this.fieldId}" has unknown declarations: [${[...missing].join(", ")}] in expression "${expression}"`,
+      );
+    const result = Function(
+      "abs",
+      `"use strict"; return (${prepared});`,
+    )(Math.abs);
     return typeof result === "number" && Number.isFinite(result) ? result : 0;
   }
 }
@@ -374,8 +846,49 @@ const transitionToPercentageBackward = new Transition(
     node.type instanceof PercentageNode,
 );
 
+const transitionBackwardForward = new Transition(
+  forwardState,
+  (node: DocNode, field: FieldDefinition, value: number) =>
+    !(node.type instanceof PercentageNode) &&
+    (node.type.rules.every((rule) => rule.fieldId !== field.id) ||
+      !node.type.rules.some(
+        (rule) => rule.fieldId === field.id && rule.docState === backwardState,
+      )),
+);
+
+const transitionBackwardPercentage = new Transition(
+  percentageBackwardState,
+  (node: DocNode, field: FieldDefinition, value: number) =>
+    node.type instanceof PercentageNode,
+);
+
+const transitionPercentageForward = new Transition(
+  forwardState,
+  (node: DocNode, field: FieldDefinition, value: number) =>
+    !(node.type instanceof PercentageNode) &&
+    (node.type.rules.every((rule) => rule.fieldId !== field.id) ||
+      !node.type.rules.some(
+        (rule) => rule.fieldId === field.id && rule.docState === backwardState,
+      )),
+);
+
+const transitionPercentageBackward = new Transition(
+  backwardState,
+  (node: DocNode, field: FieldDefinition, value: number) =>
+    !(node.type instanceof PercentageNode) &&
+    node.type.rules.some(
+      (rule) => rule.fieldId === field.id && rule.docState === backwardState,
+    ),
+);
+
 forwardState.addTransition(transitionForwardBackward);
 forwardState.addTransition(transitionToPercentageBackward);
+
+backwardState.addTransition(transitionBackwardForward);
+backwardState.addTransition(transitionBackwardPercentage);
+
+percentageBackwardState.addTransition(transitionPercentageForward);
+percentageBackwardState.addTransition(transitionPercentageBackward);
 
 // Node-Types
 class TotalCostNode extends NodeType {
@@ -383,7 +896,7 @@ class TotalCostNode extends NodeType {
     new FieldDefinition("total", 0),
     new FieldDefinition("childrenTotal", 0),
     new FieldDefinition("variableChildrenTotal", 0),
-    new FieldDefinition("fixedChildrenTotal", 0),
+    new FieldDefinition("singleChildrenTotal", 0),
   ];
 
   protected static override readonly defaultRules: Rule[] = [
@@ -393,22 +906,23 @@ class TotalCostNode extends NodeType {
       "total",
       forwardState,
     ),
-    new Rule(
-      "total-backward",
-      "childrenTotal > 0 ? childrenTotal : total",
-      "total",
-      backwardState,
-    ),
+    new Rule("total-backward", "total", "total", backwardState),
     new Rule(
       "total-percentage-backward",
       "childrenTotal > 0 ? childrenTotal : total",
       "total",
       percentageBackwardState,
-    )
+    ),
   ];
 
   static get allowedChildTypes(): (typeof NodeType)[] {
-    return [UnitCostNode, TotalCostNode, PercentageNode, FixedUnitCostNode, PaintingNode];
+    return [
+      UnitCostNode,
+      TotalCostNode,
+      PercentageNode,
+      SingleUnitCostNode,
+      PaintingNode,
+    ];
   }
 }
 
@@ -418,6 +932,7 @@ class UnitCostNode extends TotalCostNode {
     new FieldDefinition("count", 0),
     new FieldDefinition("unitCost", 0),
     new FieldDefinition("oldTotal", 0),
+    new FieldDefinition("pricePerUnit", 0),
   ];
 
   protected static override readonly defaultRules: Rule[] = [
@@ -429,13 +944,19 @@ class UnitCostNode extends TotalCostNode {
     ),
     new Rule(
       "total-forward",
-      "childrenTotal > 0 ? variableChildrenTotal * count + fixedChildrenTotal : count * unitCost",
+      "childrenTotal > 0 ? variableChildrenTotal * count + singleChildrenTotal : count * unitCost",
       "total",
       forwardState,
     ),
     new Rule(
+      "pricePerUnit-forward",
+      "count > 0 ? total / count : 0",
+      "pricePerUnit",
+      forwardState,
+    ),
+    new Rule(
       "total-backward",
-      "childrenTotal > 0 ? variableChildrenTotal * count + fixedChildrenTotal : count * unitCost",
+      "childrenTotal > 0 ? variableChildrenTotal * count + singleChildrenTotal : count * unitCost",
       "total",
       backwardState,
       "unitCost",
@@ -448,15 +969,21 @@ class UnitCostNode extends TotalCostNode {
       "total",
     ),
     new Rule(
+      "pricePerUnit-backward",
+      "count > 0 ? total / count : 0",
+      "pricePerUnit",
+      backwardState,
+    ),
+    new Rule(
       "total-percentage-backward",
-      "childrenTotal > 0 ? variableChildrenTotal * count + fixedChildrenTotal : count * unitCost",
+      "childrenTotal > 0 ? variableChildrenTotal * count + singleChildrenTotal : count * unitCost",
       "total",
       percentageBackwardState,
-    )
+    ),
   ];
 }
 
-class FixedUnitCostNode extends UnitCostNode {}
+class SingleUnitCostNode extends UnitCostNode {}
 
 class PercentageNode extends TotalCostNode {
   protected static override readonly defaultFields: FieldDefinition[] = [
@@ -468,20 +995,20 @@ class PercentageNode extends TotalCostNode {
   protected static override readonly defaultRules: Rule[] = [
     new Rule(
       "total-forward",
-      "- parentTotal * percentage / 100 + childrenTotal",
+      "- abs(parentTotal) * percentage / 100 + childrenTotal",
       "total",
       forwardState,
     ),
     new Rule(
       "percentage-backward",
-      "- total * 100 / parentTotal",
+      "- total * 100 / abs(parentTotal)",
       "percentage",
       percentageBackwardState,
       "total",
     ),
     new Rule(
       "total-backward",
-      "- parentTotal * percentage / 100 + childrenTotal",
+      "- abs(parentTotal) * percentage / 100 + childrenTotal",
       "total",
       percentageBackwardState,
       "percentage",
@@ -539,7 +1066,7 @@ const material = new UnitCostNode(
   [],
 );
 
-const travel = new FixedUnitCostNode(
+const travel = new SingleUnitCostNode(
   "travel",
   "Reise",
   [],
@@ -576,140 +1103,350 @@ const painting_room = new PaintingNode(
   [],
 );
 
-// Commands
-const forwardCommand = new Command((doc, node, field, value) => {
-  const walk = (node: DocNode): DocNode => {
-    if (node.type instanceof PercentageNode) {
-      // set total for discount nodes to 0
-      node = removeTotalFromDiscountNode(node);
-      return node;
-    }
-    // always apply rules to children first because parent-nodes depend on children
-    node.children = node.children.map(walk);
-    node = attachChildrenTotal(node);
-    node.type.evaluateRules(doc, field);
-    return node;
-  };
+// dependencyNetworks
 
-  const walkWithDiscount = (node: DocNode): DocNode => {
-    if (node.type instanceof PercentageNode && node.parent) {
-      // recalculate parent total to include previous discount
-      node.parent = attachChildrenTotal(node.parent);
-      node.parent.type.evaluateRules(doc, field);
+// steps
 
-      // recalculate discount-node without children to get correct value
-      node = attachParentTotal(node);
-      node = attachChildrenTotal(node);
-      node.type.evaluateRules(doc, field);
-    }
-    // always apply rules to children first because parent-nodes depend on children
-    node.children = node.children.map(walkWithDiscount);
-    node = attachChildrenTotal(node);
-    node.type.evaluateRules(doc, field);
-    return node;
-  };
-
-  if (node.type instanceof TotalCostNode) {
-    field.setValue(value);
-    walk(doc.root);
-    walkWithDiscount(doc.root);
-  } else {
-    throw new Error(`Unknown node type: ${node.type}`);
-  }
-});
-
-const backwardCommand = new Command((doc, node, field, value) => {
-  const walk = (
-    doc: Doc,
-    node: DocNode,
-    field: FieldDefinition,
-    value: number,
-  ): DocNode => {
-    if (node.type instanceof TotalCostNode) {
-      node = attachOldTotal(node);
-      field.setValue(value);
-
-      const canDistribute =
-        node.children.length > 0 &&
-        node.type.fields.find((f) => f.id === field.id)?.value !== null &&
-        !(node.type instanceof PercentageNode);
-      if (canDistribute) {
-        // unitCost is the standard fieldId for the price per unit,
-        // if a node has a price per unit then distribution on children is not handeled over the total fild on backward calculation
-        let desiredPrice = 0;
-        if (node.type instanceof UnitCostNode) {
-          node.type.evaluateRules(doc, field);
-          desiredPrice =
-            node.type.fields.find((f) => f.id === "unitCost")?.value ?? 0;
-        } else {
-          desiredPrice =
-            node.type.fields.find((f) => f.id === "total")?.value ?? 0;
-        }
-        const childrenTotal = sumChildField(node, "total");
-
-        if (childrenTotal > 0) {
-          // apply rules to children backward and evenly distribute new total or unitCost of parent-node
-          node.children = node.children.map((child) => {
-            // don't distribute total or unitCost on percentage-discount-nodes
-            // remove total from discount-nodes for proper backward-computation
-            // reason: dicsount-nodes containing discount-nodes can't be easily computed backward
-            if (child.type instanceof PercentageNode) {
-              return removeTotalFromDiscountNode(child);
-            }
-            const childTotalField = child.type.fields.find(
-              (f) => f.id === "total",
-            );
-            if (!childTotalField)
-              throw new Error("childNode has no total field");
-            const currentChildTarget = childTotalField.value ?? 0;
-            const share = currentChildTarget / childrenTotal;
-            const nextChildTarget = desiredPrice * share;
-            return walk(doc, child, childTotalField, nextChildTarget);
-          });
-        }
-      }
-
-      // after distributing total or unitCost on children, apply backward-rules to current node
-      if (node.parent) node = attachParentTotal(node);
-      node = attachChildrenTotal(node);
-      node.type.evaluateRules(doc, field);
-
-      return node;
-    } else {
-      throw new Error(`Unknown node type: ${node.type}`);
-    }
-  };
-
-  return walk(doc, node, field, value);
-});
-
-const handlePercentageCommand = new Command(
-  (doc: Doc, node: DocNode, field: FieldDefinition, value: number) => {
-    if (node.type instanceof PercentageNode && node.parent) {
-      node = removeTotalFromDiscountNode(node);
-      field.setValue(value);
-      node = attachChildrenTotal(node);
-      node.type.evaluateRules(doc, field);
-    } else {
-      if (!node.parent) throw new Error(`node has no parent: ${node.id}`);
-      throw new Error(`Unknown node type: ${node.type}`);
-    }
-  },
+const removeTotalFromDiscountNode = new ZeroSubTreeStep(
+  new FieldDefinition("total", 0),
+  [PercentageNode],
 );
 
-const changeStateToForwardCommand = new Command((doc: Doc, node: DocNode, field: FieldDefinition, value: number) => {
-  doc.currentState = forwardState;
-  doc.currentState.executeCommands(doc, node, field, value);
+const attachChildrenTotal = new AggregateChildrenFieldStep(
+  new FieldDefinition("total", 0),
+  new FieldDefinition("childrenTotal", 0),
+  "sum",
+  [
+    UnitCostNode,
+    TotalCostNode,
+    PercentageNode,
+    PaintingNode,
+    SingleUnitCostNode,
+  ],
+  [
+    SingleUnitCostNode,
+    UnitCostNode,
+    TotalCostNode,
+    PercentageNode,
+    PaintingNode,
+  ],
+);
+
+const attachChildrenVariableTotal = new AggregateChildrenFieldStep(
+  new FieldDefinition("total", 0),
+  new FieldDefinition("variableChildrenTotal", 0),
+  "sum",
+  [
+    UnitCostNode,
+    TotalCostNode,
+    PercentageNode,
+    PaintingNode,
+    SingleUnitCostNode,
+  ],
+  [UnitCostNode, TotalCostNode, PercentageNode, PaintingNode],
+);
+
+const attachChildrenSingleTotal = new AggregateChildrenFieldStep(
+  new FieldDefinition("total", 0),
+  new FieldDefinition("singleChildrenTotal", 0),
+  "sum",
+  [
+    UnitCostNode,
+    TotalCostNode,
+    PercentageNode,
+    PaintingNode,
+    SingleUnitCostNode,
+  ],
+  [SingleUnitCostNode],
+);
+
+const attachChildrenTotalToParent = new AggregateChildrenFieldToParentStep(
+  new FieldDefinition("total", 0),
+  new FieldDefinition("childrenTotal", 0),
+  "sum",
+  [
+    UnitCostNode,
+    TotalCostNode,
+    PercentageNode,
+    PaintingNode,
+    SingleUnitCostNode,
+  ],
+  [
+    UnitCostNode,
+    TotalCostNode,
+    PercentageNode,
+    PaintingNode,
+    SingleUnitCostNode,
+  ],
+);
+
+const attachChildrenVariableTotalToParent =
+  new AggregateChildrenFieldToParentStep(
+    new FieldDefinition("total", 0),
+    new FieldDefinition("variableChildrenTotal", 0),
+    "sum",
+    [
+      UnitCostNode,
+      TotalCostNode,
+      PercentageNode,
+      PaintingNode,
+      SingleUnitCostNode,
+    ],
+    [UnitCostNode, TotalCostNode, PercentageNode, PaintingNode],
+  );
+
+const attachChildrenSingleTotalToParent =
+  new AggregateChildrenFieldToParentStep(
+    new FieldDefinition("total", 0),
+    new FieldDefinition("singleChildrenTotal", 0),
+    "sum",
+    [
+      UnitCostNode,
+      TotalCostNode,
+      PercentageNode,
+      PaintingNode,
+      SingleUnitCostNode,
+    ],
+    [SingleUnitCostNode],
+  );
+
+const evaluateRules = new EvaluateRulesStep();
+
+const evaluateParentRules = new EvaluateParentRulesStep();
+
+const attachOldTotal = new AttachFieldStep(
+  new FieldDefinition("total", 0),
+  new FieldDefinition("oldTotal", 0),
+  [UnitCostNode, SingleUnitCostNode, PaintingNode],
+);
+
+const attachParentTotal = new AttachParentFieldStep(
+  new FieldDefinition("total", 0),
+  new FieldDefinition("parentTotal", 0),
+  [PercentageNode],
+  [TotalCostNode, PercentageNode],
+);
+
+const attachParentPricePerUnit = new AttachParentFieldStep(
+  new FieldDefinition("pricePerUnit", 0),
+  new FieldDefinition("parentTotal", 0),
+  [PercentageNode],
+  [UnitCostNode, SingleUnitCostNode, PaintingNode],
+);
+
+const distributeTotalOnChildrenBackwards =
+  new DistributeProportionalOnChildrenStep(
+    new FieldDefinition("total", 0),
+    new FieldDefinition("total", 0),
+    [TotalCostNode],
+    [
+      TotalCostNode,
+      UnitCostNode,
+      SingleUnitCostNode,
+      PaintingNode,
+      PercentageNode,
+    ],
+  );
+
+const distributeUnitCostOnChildrenBackwards =
+  new DistributeProportionalOnChildrenStep(
+    new FieldDefinition("unitCost", 0),
+    new FieldDefinition("total", 0),
+    [UnitCostNode, SingleUnitCostNode, PaintingNode],
+    [
+      TotalCostNode,
+      UnitCostNode,
+      SingleUnitCostNode,
+      PaintingNode,
+      PercentageNode,
+    ],
+  );
+
+const setValue = new SetNewFieldValueStep();
+
+const repeatNetworkForChildren = new ReapeatNetworkForChildrenStep(
+  new FieldDefinition("total", 0),
+);
+
+// networks
+
+const forwardNetworSetValuekMap = new Map<(typeof NodeType)[], NetworkStep[]>();
+
+forwardNetworSetValuekMap.set(
+  [
+    UnitCostNode,
+    SingleUnitCostNode,
+    PaintingNode,
+    TotalCostNode,
+    PercentageNode,
+  ],
+  [setValue],
+);
+
+const forwardNetworkSetValue = new StepDependencyNetwork(
+  forwardNetworSetValuekMap,
+  forwardState,
+);
+
+const forwardNetworkWithoutPercentageMap = new Map<
+  (typeof NodeType)[],
+  NetworkStep[]
+>();
+
+forwardNetworkWithoutPercentageMap.set(
+  [UnitCostNode, SingleUnitCostNode, PaintingNode, TotalCostNode],
+  [
+    repeatNetworkForChildren,
+    attachChildrenTotal,
+    attachChildrenVariableTotal,
+    attachChildrenSingleTotal,
+    evaluateRules,
+  ],
+);
+forwardNetworkWithoutPercentageMap.set(
+  [PercentageNode],
+  [removeTotalFromDiscountNode],
+);
+
+const forwardNetworkWithoutPercentage = new StepDependencyNetwork(
+  forwardNetworkWithoutPercentageMap,
+  forwardState,
+);
+
+const forwardNetworkWithPercentageMap = new Map<
+  (typeof NodeType)[],
+  NetworkStep[]
+>();
+
+forwardNetworkWithPercentageMap.set(
+  [UnitCostNode, SingleUnitCostNode, PaintingNode, TotalCostNode],
+  [
+    repeatNetworkForChildren,
+    attachChildrenTotal,
+    attachChildrenVariableTotal,
+    attachChildrenSingleTotal,
+    evaluateRules,
+    attachOldTotal,
+  ],
+);
+forwardNetworkWithPercentageMap.set(
+  [PercentageNode],
+  [
+    attachChildrenTotalToParent,
+    attachChildrenVariableTotalToParent,
+    attachChildrenSingleTotalToParent,
+    evaluateParentRules,
+    attachParentTotal,
+    attachParentPricePerUnit,
+    attachChildrenTotal,
+    attachChildrenVariableTotal,
+    attachChildrenSingleTotal,
+    evaluateRules,
+    repeatNetworkForChildren,
+    attachChildrenTotal,
+    attachChildrenVariableTotal,
+    attachChildrenSingleTotal,
+    evaluateRules,
+  ],
+);
+
+const forwardNetworkWithPercentage = new StepDependencyNetwork(
+  forwardNetworkWithPercentageMap,
+  forwardState,
+);
+
+const backwardNetworkMap = new Map<(typeof NodeType)[], NetworkStep[]>();
+
+backwardNetworkMap.set(
+  [TotalCostNode],
+  [
+    setValue,
+    evaluateRules,
+    distributeTotalOnChildrenBackwards,
+    repeatNetworkForChildren,
+    attachChildrenTotal,
+    attachChildrenVariableTotal,
+    attachChildrenSingleTotal,
+    evaluateRules,
+  ],
+);
+
+backwardNetworkMap.set(
+  [UnitCostNode, SingleUnitCostNode, PaintingNode],
+  [
+    setValue,
+    evaluateRules,
+    distributeUnitCostOnChildrenBackwards,
+    repeatNetworkForChildren,
+    attachChildrenTotal,
+    attachChildrenVariableTotal,
+    attachChildrenSingleTotal,
+    evaluateRules,
+    attachOldTotal,
+  ],
+);
+
+const backwardNetwork = new StepDependencyNetwork(
+  backwardNetworkMap,
+  backwardState,
+);
+
+const percentageNetworkMap = new Map<(typeof NodeType)[], NetworkStep[]>();
+
+percentageNetworkMap.set(
+  [PercentageNode],
+  [
+    removeTotalFromDiscountNode,
+    setValue,
+    attachChildrenTotal,
+    attachChildrenVariableTotal,
+    attachChildrenSingleTotal,
+    evaluateRules,
+  ],
+);
+
+const percentageNetwork = new StepDependencyNetwork(
+  percentageNetworkMap,
+  percentageBackwardState,
+);
+
+// Add Networks to state
+forwardState.addNetwork({
+  startAt: "changedNode",
+  network: forwardNetworkSetValue,
 });
-
-// add Commands to states
-forwardState.addCommand(forwardCommand);
-
-backwardState.addCommand(backwardCommand);
-backwardState.addCommand(changeStateToForwardCommand);
-
-percentageBackwardState.addCommand(handlePercentageCommand);
-percentageBackwardState.addCommand(changeStateToForwardCommand);
+forwardState.addNetwork({
+  startAt: "root",
+  network: forwardNetworkWithoutPercentage,
+});
+forwardState.addNetwork({
+  startAt: "root",
+  network: forwardNetworkWithPercentage,
+});
+backwardState.addNetwork({
+  startAt: "changedNode",
+  network: backwardNetwork,
+});
+backwardState.addNetwork({
+  startAt: "root",
+  network: forwardNetworkWithoutPercentage,
+});
+backwardState.addNetwork({
+  startAt: "root",
+  network: forwardNetworkWithPercentage,
+});
+percentageBackwardState.addNetwork({
+  startAt: "changedNode",
+  network: percentageNetwork,
+});
+percentageBackwardState.addNetwork({
+  startAt: "root",
+  network: forwardNetworkWithoutPercentage,
+});
+percentageBackwardState.addNetwork({
+  startAt: "root",
+  network: forwardNetworkWithPercentage,
+});
 
 // Doc
 const nodeTypeMap = new Map<string, NodeType>();
@@ -725,80 +1462,3 @@ export const exampleDoc = new Doc(
   forwardState,
   nodeTypeMap,
 );
-
-// Helper functions
-function attachChildrenTotal(node: DocNode): DocNode {
-  if (node.type instanceof TotalCostNode) {
-    let childrenTotal = 0;
-    let variableChildrenTotal = 0;
-    let fixedChildrenTotal = 0;
-    for (const child of node.children) {
-      childrenTotal +=
-        child.type.fields.find((f) => f.id === "total")?.value ?? 0;
-      if (child.type instanceof FixedUnitCostNode) {
-        fixedChildrenTotal +=
-          child.type.fields.find((f) => f.id === "total")?.value ?? 0;
-      } else {
-        variableChildrenTotal +=
-          child.type.fields.find((f) => f.id === "total")?.value ?? 0;
-      }
-    }
-    node.type.fields
-      .find((f) => f.id === "childrenTotal")
-      ?.setValue(childrenTotal);
-    node.type.fields
-      .find((f) => f.id === "variableChildrenTotal")
-      ?.setValue(variableChildrenTotal);
-    node.type.fields
-      .find((f) => f.id === "fixedChildrenTotal")
-      ?.setValue(fixedChildrenTotal);
-  }
-  return node;
-}
-
-function attachOldTotal(node: DocNode): DocNode {
-  if (node.type instanceof UnitCostNode) {
-    node.type.fields
-      .find((f) => f.id === "oldTotal")
-      ?.setValue(node.type.fields.find((f) => f.id === "total")?.value ?? 0);
-  }
-  return node;
-}
-
-function attachParentTotal(node: DocNode): DocNode {
-  if (node.type instanceof PercentageNode && node.parent) {
-    let parentTotal = 0;
-
-    // if parent has unitCost then percentage needs to be calculated to unitCost of parent instead of total
-    // because percentage gets applied to total instead of unitCost (total = count * variableChildrenTotal + fixedChildrenTotal; unitCost = childrenTotal)
-    if (node.parent.type instanceof UnitCostNode) {
-      let count =
-        node.parent.type.fields.find((f) => f.id === "count")?.value ?? 0;
-      let total =
-        node.parent.type.fields.find((f) => f.id === "total")?.value ?? 0;
-      parentTotal = Math.abs(total / count);
-    } else {
-      parentTotal =
-        Math.abs(node.parent.type.fields.find((f) => f.id === "total")?.value ?? 0);
-    }
-    node.type.fields.find((f) => f.id === "parentTotal")?.setValue(parentTotal);
-  }
-  return node;
-}
-
-function removeTotalFromDiscountNode(node: DocNode): DocNode {
-  if (node.type instanceof PercentageNode) {
-    node.type.fields.find((f) => f.id === "total")?.setValue(0);
-    node.children = node.children.map(removeTotalFromDiscountNode);
-    return node;
-  }
-  return new DocNode("", new TotalCostNode("", "", [], [], []));
-}
-
-function sumChildField(node: DocNode, fieldId: string): number {
-  let sum = 0;
-  for (const child of node.children) {
-    sum += child.type.fields.find((f) => f.id === fieldId)?.value ?? 0;
-  }
-  return sum;
-}
