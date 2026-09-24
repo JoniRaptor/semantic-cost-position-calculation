@@ -8,8 +8,8 @@ import exampleDocument from "./exampleJSON/exampleDocument.json";
 import {
   CostNodeView,
   CostDocument,
-  exampleDoc,
 } from "./semantic/stateMachine";
+import { exampleDoc } from "./semantic/builderDemo";
 
 function buildPmDocFromCostNode(node: CostNodeView): Node {
   return costSchema.node("doc", null, [buildCostItemNode(node)]);
