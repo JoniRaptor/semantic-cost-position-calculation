@@ -1,0 +1,91 @@
+{
+  "root": {
+    "id": "root",
+    "typeId": "brutto",
+    "label": "Gesamtsumme",
+    "values": {
+      "brutto": 2605.0,
+      "total": 2300.0
+    },
+    "children": [
+      {
+        "id": "p1",
+        "typeId": "netto",
+        "label": "Nettosumme",
+        "values": {
+          "total": 2300.0,
+          "Mwst19ChildrenTotal": 1200.0,
+          "Mwst19": 228.0,
+          "Mwst7ChildrenTotal": 1100.0,
+          "Mwst7": 77.0
+        },
+        "children": [
+          {
+            "id": "p1-1",
+            "typeId": "title",
+            "label": "Titel 1.",
+            "values": {
+              "total": 2000.0
+            },
+            "children": [
+              {
+                "id": "p1-1-m1",
+                "typeId": "material19Mwst",
+                "label": "Artikel mit 19 % MwSt ",
+                "values": {
+                  "count": 10,
+                  "unitCost": 100,
+                  "total": 1000
+                },
+                "children": []
+              },
+              {
+                "id": "p1-1-m2",
+                "typeId": "material7Mwst",
+                "label": "Artikel mit 7 % MwSt ",
+                "values": {
+                  "count": 10,
+                  "unitCost": 100,
+                  "total": 1000
+                },
+                "children": []
+              }
+            ]
+          },
+          {
+            "id": "p1-2",
+            "typeId": "title",
+            "label": "Titel 2.",
+            "values": {
+              "total": 300.0
+            },
+            "children": [
+              {
+                "id": "p1-2-l1",
+                "typeId": "labor19Mwst",
+                "label": "Lohn 19 % MwSt",
+                "values": {
+                  "count": 1,
+                  "unitCost": 200,
+                  "total": 200
+                },
+                "children": []
+              },
+              {
+                "id": "p1-2-l2",
+                "typeId": "labor7Mwst",
+                "label": "Lohn 7 % MwSt",
+                "values": {
+                  "count": 1,
+                  "unitCost": 100,
+                  "total": 100
+                },
+                "children": []
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

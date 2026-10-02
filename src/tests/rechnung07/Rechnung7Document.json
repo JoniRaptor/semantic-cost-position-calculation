@@ -1,0 +1,103 @@
+{
+    "root": {
+        "id": "root",
+        "typeId": "brutto",
+        "label": "Gesamtsumme",
+        "values": {
+            "brutto": 775.4278,
+            "total": 651.62
+        },
+        "children": [
+            {
+                "id": "p1",
+                "typeId": "netto",
+                "label": "Nettosumme",
+                "values": {
+                    "total": 651.62,
+                    "Mwst19": 123.8078
+                },
+                "children": [
+                    {
+                        "id": "p1-1",
+                        "typeId": "material",
+                        "label": "Waschtisch und Waschtischamatur montieren",
+                        "values": {
+                            "count": 1,
+                            "unitCost": 651.62,
+                            "total": 651.62
+                        },
+                        "children": [
+                            {
+                                "id": "p1-1-1",
+                                "typeId": "material",
+                                "label": "Einloch-Waschtischamatur chrom",
+                                "values": {
+                                    "count": 1,
+                                    "unitCost": 210.82,
+                                    "total": 210.82
+                                },
+                                "children": []
+                            },
+                            {
+                                "id": "p1-1-2",
+                                "typeId": "material",
+                                "label": "Wasserzuleitung erstellen",
+                                "values": {
+                                    "count": 1,
+                                    "unitCost": 44,
+                                    "total": 44
+                                },
+                                "children": [
+                                    {
+                                        "id": "p1-1-2-1",
+                                        "typeId": "material",
+                                        "label": "Kupferrohr",
+                                        "values": {
+                                            "count": 1.5,
+                                            "unitCost": 10,
+                                            "total": 15
+                                        },
+                                        "children": []
+                                    },
+                                    {
+                                        "id": "p1-1-2-2",
+                                        "typeId": "labor",
+                                        "label": "Monteurstunde",
+                                        "values": {
+                                            "count": 30,
+                                            "unitCost": 58,
+                                            "total": 29
+                                        },
+                                        "children": []
+                                    }
+                                ]
+                            },
+                            {
+                                "id": "p1-1-3",
+                                "typeId": "material",
+                                "label": "Waschtisch mit Überlauf",
+                                "values": {
+                                    "count": 1,
+                                    "unitCost": 334.80,
+                                    "total": 334.80
+                                },
+                                "children": []
+                            },
+                            {
+                                "id": "p1-1-4",
+                                "typeId": "labor",
+                                "label": "Meister",
+                                "values": {
+                                    "count": 60,
+                                    "unitCost": 62,
+                                    "total": 62
+                                },
+                                "children": []
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+}

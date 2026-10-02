@@ -1,0 +1,78 @@
+{
+    "root": {
+        "id": "root",
+        "typeId": "brutto",
+        "label": "Gesamtsumme",
+        "values": {
+            "brutto": 26305.188,
+            "total": 22105.20
+        },
+        "children": [
+            {
+                "id": "p1",
+                "typeId": "netto",
+                "label": "Nettosumme",
+                "values": {
+                    "total": 22105.20,
+                    "Mwst19": 4199.988
+                },
+                "children": [
+                    {
+                        "id": "p1-1",
+                        "typeId": "title",
+                        "label": "Summe 1. Titel",
+                        "values": {
+                            "total": 22105.20
+                        },
+                        "children": [
+                            {
+                                "id": "p1-1-1",
+                                "typeId": "material",
+                                "label": "Waschtisch mit Überlauf",
+                                "values": {
+                                    "count": 1,
+                                    "unitCost": 334.80,
+                                    "total": 334.80
+                                },
+                                "children": []
+                            },
+                            {
+                                "id": "p1-1-2",
+                                "typeId": "material",
+                                "label": "WOW SKIN Wandfl. MOSS GLOSS 40x125x8,5mm 0,57qm STG",
+                                "values": {
+                                    "count": 12,
+                                    "unitCost": 100,
+                                    "total": 1200
+                                },
+                                "children": []
+                            },
+                            {
+                                "id": "p1-1-3",
+                                "typeId": "material",
+                                "label": "WOW STRIPES B-Fl. GRAPHITE STONE MATT 75x300x8mm 0,29qm STG",
+                                "values": {
+                                    "count": 21,
+                                    "unitCost": 950,
+                                    "total": 19950
+                                },
+                                "children": []
+                            },
+                            {
+                                "id": "p1-1-4",
+                                "typeId": "material",
+                                "label": "Wandfliese 33,7 x 47 cm weiß",
+                                "values": {
+                                    "count": 33,
+                                    "unitCost": 18.8,
+                                    "total": 620.4
+                                },
+                                "children": []
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+}

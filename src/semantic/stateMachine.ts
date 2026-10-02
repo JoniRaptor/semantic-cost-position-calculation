@@ -1,8 +1,14 @@
 export class Doc {
   root: DocNode;
   currentState: DocState;
-  nodeTypes: Map<string, NodeType>;
+  private nodeTypes: Map<string, NodeType>;
 
+  /**
+   * Class to connect Node-Tree with State-Machine
+   * @param root root of Node-Tree
+   * @param currentState starting State of State-Machine
+   * @param nodeTypes Map of instances of NodeTypes allowed in the Node-Tree
+   */
   constructor(
     root: DocNode,
     currentState: DocState, // simply for checking next Transition conditions
@@ -13,6 +19,11 @@ export class Doc {
     this.nodeTypes = nodeTypes;
   }
 
+  /**
+   * Method to find a Node in the Node-Tree by its id
+   * @param id id of the Node
+   * @returns the found Node
+   */
   findNodeById(id: string): DocNode {
     const walk = (node: DocNode): DocNode | undefined => {
       if (node.id === id) return node;
@@ -26,13 +37,20 @@ export class Doc {
     return result;
   }
 
-  handleState(node: DocNode, field: FieldDefinition, value: number): DocNode {
+  /**
+   * Method to handle transitions to different states of the State-Machine and executes the corresponding list of Dependency-Networks
+   * @param node changed Node
+   * @param field changed Field
+   * @param value new Value
+   * @returns Root of updated Node-Tree
+   */
+  private handleState(node: DocNode, field: FieldDefinition, value: number): DocNode {
     // check conditions
     for (const transition of this.currentState.transitions) {
       if (transition.condition(node, field, value)) {
         // change state
         this.currentState = transition.targetState;
-        // execute commands
+        // execute registered list of dependency-Networks
         this.currentState.executeNetworks(this, node, field, value);
         return this.root;
       }
@@ -41,6 +59,14 @@ export class Doc {
     return this.root;
   }
 
+  /**
+   * Method to update the Node-Tree for a changed Field with the defined bahavior in the State-Machine
+   * @param tree the Doc to be updated
+   * @param nodeId id of the changed Node
+   * @param field changed Field
+   * @param value new Value
+   * @returns Root of updated Node-Tree
+   */
   updateTreeForFieldChange(
     tree: Doc,
     nodeId: string,
@@ -56,6 +82,12 @@ export class Doc {
     return this.root;
   }
 
+  /**
+   * Method to recursively attach parents to all Nodes in the Node-Tree of the Doc
+   * @param node Node to attach parents to
+   * @param parent parent of the Node
+   * @returns Node with attached parents
+   */
   attachParents(node: DocNode, parent?: DocNode) {
     node.parent = parent;
     for (const child of node.children) {
@@ -66,6 +98,11 @@ export class Doc {
     return node;
   }
 
+  /**
+   * Function to recursively convert an instance of the CostNode-Interface to a DocNode-Tree
+   * @param node CostNode to be converted
+   * @returns DocNode
+   */
   convertCostNodeToDocNode(node: CostNodeView): DocNode {
     let nodeType = this.nodeTypes.get(node.typeId) as NodeType;
     if (!nodeType) throw new Error(`Node type ${node.typeId} not found`);
@@ -80,6 +117,11 @@ export class Doc {
     return docNode;
   }
 
+  /**
+   * Function to recursively convert a DocNode to a CostNode-Tree
+   * @param docNode DocNode to be converted
+   * @returns CostNode
+   */
   convertDocNodeToCostNode(docNode: DocNode): CostNodeView {
     let costNode: CostNodeView = {
       id: docNode.id,
@@ -100,10 +142,18 @@ export class Doc {
     return costNode;
   }
 
+  /**
+   * Function to set the root of the Doc
+   * @param node DocNode to be set as root
+   */
   setRoot(node: DocNode) {
     this.root = node;
   }
 
+  /**
+   * Function to get a Map of instances of NodeTypes allowed in the Node-Tree
+   * @returns Map of instances of NodeTypes in the Node-Tree
+   */
   getNodeTypesMap() {
     let nodeTypes = new Map<string, NodeType>();
     for (const [key, value] of this.nodeTypes) {
@@ -130,12 +180,18 @@ export interface CostDocument {
 }
 
 export class DocNode {
-  id: string;
-  label: string;
-  type: NodeType;
+  readonly id: string;
+  readonly label: string;
+  readonly type: NodeType;
   children: DocNode[];
   parent?: DocNode;
 
+  /**
+   * Class to represent a Node in the Node-Tree
+   * @param id id of the Node (needs to be unique)
+   * @param label label of the Node
+   * @param type actual type-instance of the Node with the fields and Rules
+   */
   constructor(id: string, label: string, type: NodeType) {
     this.id = id;
     this.label = label;
@@ -143,6 +199,10 @@ export class DocNode {
     this.children = [];
   }
 
+  /**
+   * Function to add a child to the Node-Tree if the type of the child is allowed on this Node-Type
+   * @param child child to be added
+   */
   addchild(child: DocNode) {
     if (!this.type.canAddChild(child.type)) return;
     this.children.push(child);
@@ -151,19 +211,28 @@ export class DocNode {
 }
 
 export class DocState {
-  id: string;
-  dependencyNetworks: {
+  readonly id: string;
+  readonly dependencyNetworks: {
     startAt: "root" | "changedNode";
     network: StepDependencyNetwork;
   }[];
-  transitions: Transition[];
+  readonly transitions: Transition[];
 
+  /**
+   * Class to represent a State in the State-Machine
+   * has a list of Dependency-Networks and Transitions
+   * @param id id of the State (needs to be unique)
+   */
   constructor(id: string) {
     this.id = id;
     this.dependencyNetworks = [];
     this.transitions = [];
   }
 
+  /**
+   * Method to add a Dependency-Network to the State
+   * @param dependencyNetwork Dependency-Network to be added + specify from what node (root or changedNode) the Dependency-Network should be executed
+   */
   addNetwork(dependencyNetwork: {
     startAt: "root" | "changedNode";
     network: StepDependencyNetwork;
@@ -171,10 +240,21 @@ export class DocState {
     this.dependencyNetworks.push(dependencyNetwork);
   }
 
+  /**
+   * Method to add a Transition to the State
+   * @param transition Transition to be added
+   */
   addTransition(transition: Transition) {
     this.transitions.push(transition);
   }
 
+  /**
+   * Method to execute all registered Dependency-Networks of the State in the added order
+   * @param doc Doc to be updated
+   * @param node changed Node
+   * @param field changed Field
+   * @param value new Value
+   */
   executeNetworks(
     doc: Doc,
     node: DocNode,
@@ -189,7 +269,7 @@ export class DocState {
 }
 
 export class NetworkStep {
-  execute: (
+  readonly execute: (
     doc: Doc,
     node: DocNode,
     field: FieldDefinition,
@@ -197,6 +277,11 @@ export class NetworkStep {
     network?: StepDependencyNetwork,
   ) => void;
 
+  /**
+   * Class to represent a custom-Step in the Dependency-Network
+   * @param execute Method to be executed with 
+   * signature of Method: (doc: Doc, currentNode: DocNode, changedField: FieldDefinition, value: number, network?: StepDependencyNetwork)
+   */
   constructor(
     execute: (
       doc: Doc,
@@ -213,12 +298,20 @@ export class NetworkStep {
 export type Operator = "sum" | "min" | "max" | "count";
 
 export class AggregateChildrenFieldStep extends NetworkStep {
-  childSourceField: FieldDefinition;
-  targetField: FieldDefinition;
-  operator: Operator;
-  allowedTypes: (typeof NodeType)[];
-  allowedChildTypes: (typeof NodeType)[];
+  private childSourceField: FieldDefinition;
+  private targetField: FieldDefinition;
+  private operator: Operator;
+  private allowedTypes: (typeof NodeType)[];
+  private allowedChildTypes: (typeof NodeType)[];
 
+  /**
+   * Predefined NetworkStep for aggregating field of children to current Node
+   * @param childSourceField Field of children to be aggregated
+   * @param targetField Field to set to aggregated value
+   * @param operator Operation to be used (sum, min, max, count)
+   * @param allowedTypes NodeTypes the instance of this step can be executed on
+   * @param allowedChildTypes NodeTypes of children that can be aggregated
+   */
   constructor(
     childSourceField: FieldDefinition,
     targetField: FieldDefinition,
@@ -318,12 +411,20 @@ export class AggregateChildrenFieldStep extends NetworkStep {
 }
 
 export class AggregateChildrenFieldToParentStep extends NetworkStep {
-  childSourceField: FieldDefinition;
-  parentTargetField: FieldDefinition;
-  operator: Operator;
-  allowedParentTypes: (typeof NodeType)[];
-  allowedChildTypes: (typeof NodeType)[];
+  private childSourceField: FieldDefinition;
+  private parentTargetField: FieldDefinition;
+  private operator: Operator;
+  private allowedParentTypes: (typeof NodeType)[];
+  private allowedChildTypes: (typeof NodeType)[];
 
+  /**
+   * Predefined NetworkStep for aggregating field of children of parent of current Node to parent of current Node
+   * @param childSourceField Field of children to be aggregated
+   * @param parentTargetField Field of parent to set to aggregated value
+   * @param operator Operation to be used (sum, min, max, count)
+   * @param allowedParentTypes NodeTypes of parent for wich the instance of this step can be executed
+   * @param allowedChildTypes NodeTypes of children that can be aggregated (includes current Node)
+   */
   constructor(
     childSourceField: FieldDefinition,
     parentTargetField: FieldDefinition,
@@ -430,10 +531,16 @@ export class AggregateChildrenFieldToParentStep extends NetworkStep {
 }
 
 export class AttachFieldStep extends NetworkStep {
-  sourceField: FieldDefinition;
-  targetField: FieldDefinition;
-  allowedTypes: (typeof NodeType)[];
+  private sourceField: FieldDefinition;
+  private targetField: FieldDefinition;
+  private allowedTypes: (typeof NodeType)[];
 
+  /**
+   * Predefined NetworkStep for attaching field of current Node to field of current Node
+   * @param sourceField Field of current Node to be attached
+   * @param targetField Field of current Node to set to source value
+   * @param allowedTypes NodeTypes for which the instance of this step can be executed
+   */
   constructor(
     sourceField: FieldDefinition,
     targetField: FieldDefinition,
@@ -460,11 +567,18 @@ export class AttachFieldStep extends NetworkStep {
 }
 
 export class AttachParentFieldStep extends NetworkStep {
-  parentSourceField: FieldDefinition;
-  targetField: FieldDefinition;
-  allowedTypes: (typeof NodeType)[];
-  allowedParentTypes: (typeof NodeType)[];
+  private parentSourceField: FieldDefinition;
+  private targetField: FieldDefinition;
+  private allowedTypes: (typeof NodeType)[];
+  private allowedParentTypes: (typeof NodeType)[];
 
+  /**
+   * Predefined NetworkStep for attaching field of parent of current Node to field of current Node
+   * @param parentSourceField Field of parent of current Node to be attached
+   * @param targetField Field of current Node to set to parent value
+   * @param allowedTypes NodeTypes for which the instance of this step can be executed
+   * @param allowedParentTypes Parent NodeTypes for which the instance of this step can be executed
+   */
   constructor(
     parentSourceField: FieldDefinition,
     targetField: FieldDefinition,
@@ -497,11 +611,18 @@ export class AttachParentFieldStep extends NetworkStep {
 }
 
 export class DistributeProportionalOnChildrenStep extends NetworkStep {
-  sourceField: FieldDefinition;
-  childrenTargetField: FieldDefinition;
-  nodeTypes: (typeof NodeType)[];
-  childTypes: (typeof NodeType)[];
+  private sourceField: FieldDefinition;
+  private childrenTargetField: FieldDefinition;
+  private nodeTypes: (typeof NodeType)[];
+  private childTypes: (typeof NodeType)[];
 
+  /**
+   * Predefined NetworkStep for distributing field of current Node proportionaly on field of children
+   * @param sourceField Field of current Node to be distributed
+   * @param childrenTargetField Field of children of current Node to distribute value on (proportionaly to share of the individual child of sum on targetField of children)
+   * @param nodeTypes NodeTypes for which the instance of this step can be executed
+   * @param childTypes Child NodeTypes on wich to distribute the value of sourceField
+   */
   constructor(
     sourceField: FieldDefinition,
     childrenTargetField: FieldDefinition,
@@ -547,9 +668,14 @@ export class DistributeProportionalOnChildrenStep extends NetworkStep {
 }
 
 export class ZeroSubTreeStep extends NetworkStep {
-  targetField: FieldDefinition;
-  types: (typeof NodeType)[];
+  private targetField: FieldDefinition;
+  private types: (typeof NodeType)[];
 
+  /**
+   * Predefined NetworkStep for zeroing field of current Nod and children of current Node
+   * @param targetField Field of to be zeroed
+   * @param types NodeTypes for which the field will be zeroed
+   */
   constructor(targetField: FieldDefinition, types: (typeof NodeType)[]) {
     super((doc: Doc, node: DocNode, field: FieldDefinition, value: number) => {
       if (types.includes(node.type.constructor as typeof NodeType)) {
@@ -565,6 +691,9 @@ export class ZeroSubTreeStep extends NetworkStep {
 }
 
 export class EvaluateRulesStep extends NetworkStep {
+  /**
+   * Predefined NetworkStep for evaluating rules of current Node
+   */
   constructor() {
     super(
       (
@@ -582,6 +711,9 @@ export class EvaluateRulesStep extends NetworkStep {
 }
 
 export class EvaluateParentRulesStep extends NetworkStep {
+  /**
+   * Predefined NetworkStep for evaluating rules of parent of current Node
+   */
   constructor() {
     super(
       (
@@ -599,6 +731,9 @@ export class EvaluateParentRulesStep extends NetworkStep {
 }
 
 export class SetNewFieldValueStep extends NetworkStep {
+  /**
+   * Predefined NetworkStep for setting field of current Node to the changed value
+   */
   constructor() {
     super((doc: Doc, node: DocNode, field: FieldDefinition, value: number) => {
       node.type.fields.find((f) => f.id === field.id)?.setValue(value);
@@ -607,7 +742,12 @@ export class SetNewFieldValueStep extends NetworkStep {
 }
 
 export class ReapeatNetworkForChildrenStep extends NetworkStep {
-  childrenTargetField: FieldDefinition;
+  private childrenTargetField: FieldDefinition;
+
+  /**
+   * Predefined NetworkStep for running current Dependency-Network for children of current Node
+   * @param childrenTargetField Field of children on which to run the Dependency-Network
+   */
   constructor(childrenTargetField: FieldDefinition) {
     super(
       (
@@ -640,6 +780,11 @@ export class StepDependencyNetwork {
   protected readonly nodeTypeSteps: Map<(typeof NodeType)[], NetworkStep[]>;
   readonly networkState: StepDependencyNetworkState; // used to use rules from different states
 
+  /**
+   * Class for one Dependency-Network of NodeTypes (product) and the coresponding steps
+   * @param nodeTypeSteps Map of NodeType-classes (product) and the coresponding steps
+   * @param networkState NetworkState of the Dependency-Network (important for which rules to use)
+   */
   constructor(
     nodeTypeSteps: Map<(typeof NodeType)[], NetworkStep[]>,
     networkState: StepDependencyNetworkState,
@@ -648,6 +793,13 @@ export class StepDependencyNetwork {
     this.networkState = networkState;
   }
 
+  /**
+   * Method to run the steps of the Dependency-Network for the current NodeType
+   * @param doc current Doc
+   * @param node Node on which to run the Dependency-Network
+   * @param field changed Field
+   * @param value new Value
+   */
   run(doc: Doc, node: DocNode, field: FieldDefinition, value: number) {
     for (const entry of this.nodeTypeSteps) {
       if (entry[0].includes(node.type.constructor as typeof NodeType)) {
@@ -660,17 +812,27 @@ export class StepDependencyNetwork {
 }
 
 export class StepDependencyNetworkState {
-  id: string;
+  private id: string;
 
+  /**
+   * Class for State of a Dependency-Network to determine which rules to use
+   * @param id id of the State
+   */
   constructor(id: string) {
     this.id = id;
   }
 }
 
 export class Transition {
-  targetState: DocState;
-  condition: (node: DocNode, field: FieldDefinition, value: number) => boolean;
+  readonly targetState: DocState;
+  readonly condition: (node: DocNode, field: FieldDefinition, value: number) => boolean;
 
+  /**
+   * Class for Transition between two States of the State-Machine
+   * @param targetState State to which the Transition leads if the condition is true
+   * @param condition Function to check if the Transition should be executed
+   * signature of Function: (currentNode: DocNode, changedField: FieldDefinition, value: number) => boolean
+   */
   constructor(
     targetState: DocState,
     condition: (
@@ -685,12 +847,22 @@ export class Transition {
 }
 
 export abstract class NodeType {
-  typeId: string;
-  label: string;
+  readonly typeId: string;
+  readonly label: string;
   protected static readonly defaultFields: FieldDefinition[];
   fields: FieldDefinition[];
   protected static readonly defaultRules: Rule[];
   readonly rules: Rule[];
+
+  /**
+   * Class for Node-Type in the Node-Tree
+   * @param typeId needs to be unique
+   * @param label label of the Node-Type
+   * @param fields fields of the Node-Type
+   * @param labels labels of the fields {fieldId: string, label: string}
+   * @param rules rules of the Node-Type
+   * @throws Error if a Rule uses a field that is not part of the Node-Type
+   */
   constructor(
     typeId: string,
     label: string,
@@ -725,10 +897,18 @@ export abstract class NodeType {
     return (this.constructor as typeof NodeType).defaultRules;
   }
 
+  /**
+   * Method to add a field to the Node-Type
+   * @param field the field to be added
+   */
   addField(field: FieldDefinition) {
     this.fields.push(field);
   }
 
+  /**
+   * Method to remove a field from the Node-Type
+   * @param id id of the field to be removed
+   */
   removeField(id: string) {
     this.fields = this.fields.filter((f) => f.id !== id);
   }
@@ -737,12 +917,21 @@ export abstract class NodeType {
     return [];
   }
 
+  /**
+   * Method to check if a Node-Type can be added as a child of the current Node-Type
+   * @param nodeType instance of Node-Type to be added
+   */
   canAddChild(nodeType: NodeType): boolean {
     return (this.constructor as typeof NodeType).allowedChildTypes.some(
       (childType) => childType === nodeType.constructor,
     );
   }
 
+  /**
+   * Method to evaluate all rules of the Node-Type and make changes to the fields
+   * @param networkState the NetworkState of the current Dependency-Network
+   * @param field the Field that was changed
+   */
   evaluateRules(
     networkState: StepDependencyNetworkState,
     field: FieldDefinition,
@@ -753,7 +942,7 @@ export abstract class NodeType {
   }
 
   /**
-   *
+   * Method to set the labels of the fields
    * @param labels an array of {id: string, label: string}
    */
   setFieldLabels(labels: { id: string; label: string }[]) {
@@ -785,9 +974,16 @@ export abstract class NodeType {
 }
 
 export class FieldDefinition {
-  id: string;
+  readonly id: string;
   value: number;
   label: string;
+
+  /**
+   * Class to define a Field of a Node-Type
+   * @param id needs to be unique in the Node-Type
+   * @param value initial value
+   * @param label label for display
+   */
   constructor(id: string, value: number, label?: string) {
     this.id = id;
     this.value = value;
@@ -804,11 +1000,20 @@ export class FieldDefinition {
 }
 
 export class Rule {
-  id: string;
-  expression: string;
-  fieldId: string;
-  networkState: StepDependencyNetworkState;
+  readonly id: string;
+  readonly expression: string;
+  readonly fieldId: string;
+  readonly networkState: StepDependencyNetworkState;
   readonly triggerFieldId: string;
+
+  /**
+   * Class to define a Rule of a Node-Type
+   * @param id needs to be unique in the Node-Type
+   * @param expression expression-string of fieldnames of current Node-Type and simple arithmetic operators and inline functions
+   * @param fieldId id of the field to be changed to calculated value
+   * @param networkState NetworkState of the Dependency-Network on which the Rule should be executed
+   * @param triggerFieldId optional id of the field that triggers the rule only when it is the field that was changed
+   */
   constructor(
     id: string,
     expression: string,
@@ -823,6 +1028,12 @@ export class Rule {
     this.triggerFieldId = triggerFieldId;
   }
 
+  /**
+   * Method to evaluate a Rule
+   * @param networkState the NetworkState of the current Dependency-Network
+   * @param node the Node-Type of the current Node
+   * @param changedField the Field that was changed
+   */
   evaluate(
     networkState: StepDependencyNetworkState,
     node: NodeType,
@@ -839,6 +1050,13 @@ export class Rule {
     node.fields.find((f) => f.id === this.fieldId)?.setValue(value);
   }
 
+  /**
+   * Function that replaces fieldnames with their values and then evaluates the expression
+   * @param expression expression-string to be evaluated
+   * @param fields fields of current Node-Type
+   * @returns calculated value
+   * @throws if expression contains unknown fieldnames
+   */
   evaluateExpression(expression: string, fields: FieldDefinition[]): number {
     const missing = new Set<String>();
     const prepared = expression.replace(
