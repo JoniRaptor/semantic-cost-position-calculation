@@ -1,0 +1,216 @@
+@startuml sematicModel
+
+' Node-Tree
+package "Node-Tree" {
+    class Doc {
+        + root : DocNode
+        + currentState : DocState
+        - nodeTypes : Map<string, NodeType>
+        --
+        + Doc(root : DocNode, currentState : DocState, nodeTypes : Map<string, NodeType>)
+        + findNodeById(id : string) : DocNode
+        - handleState(node : DocNode, field : FieldDefinition, value : number) : DocNode
+        + updateTreeForFieldChange(tree : Doc, nodeId : string, field : FieldDefinition, value : number) : DocNode
+        + attachParents(node : DocNode, parent? : DocNode) : DocNode
+        + convertCostNodeToDocNode(node : CostNodeView) : DocNode
+        + convertDocNodeToCostNode(docNode : DocNode) : CostNodeView
+        + setRoot(node : DocNode) : void
+        + getNodeTypesMap() : Map<string, NodeType>
+    }
+    class DocNode {
+        + id : string {readOnly}
+        + label : string {readOnly}
+        + type : NodeType {readOnly}
+        + children : DocNode[]
+        + parent : DocNode [0..1]
+        --
+        + DocNode(id : string, label : string, type : NodeType)
+        + addchild(child : DocNode) : void
+    }
+    interface CostNodeView {
+        + id : string
+        + typeId : string
+        + label : string
+        + values : Record<string, number>
+        + children : CostNodeView[]
+    }
+    interface CostDocument {
+        + root : CostNodeView
+    }
+}
+
+' States of the semantic model
+package "State-Machine" {
+    class DocState {
+        + id : string {readOnly}
+        + dependencyNetworks : {startAt : "root" | "changedNode", network : StepDependencyNetwork
+    }
+    [] {readOnly}
+    + transitions : Transition[] {readOnly}
+    --
+    + DocState(id : string)
+    + addNetwork(dependencyNetwork : {startAt : "root" | "changedNode", network : StepDependencyNetwork}) : void
+    + addTransition(transition : Transition) : void
+    + executeNetworks(doc : Doc, node : DocNode, field : FieldDefinition, value : number) : void
+}
+class Transition {
+    + targetState : DocState {readOnly}
+    + condition : (node : DocNode, field : FieldDefinition, value : number) => boolean {readOnly}
+    --
+    + Transition(targetState : DocState, condition: (node : DocNode, field : FieldDefinition, value : number) => boolean)
+}
+}
+
+' Dependency-Networks
+package "Dependency-Networks" {
+class StepDependencyNetwork {
+    + nodeTypeSteps: Map<(typeof NodeType)[], NetworkStep[]> {readOnly}
+    + networkState : StepDependencyNetworkState {readOnly}
+    --
+    + StepDependencyNetwork(nodeTypeSteps: Map<(typeof NodeType)[], NetworkStep[]>, networkState : StepDependencyNetworkState)
+    + run(doc : Doc, node : DocNode, field : FieldDefinition, value : number) : void
+}
+class StepDependencyNetworkState {
+    + id : string {readOnly}
+    --
+    + StepDependencyNetworkState(id : string)
+}
+class NetworkStep {
+    + execute : (doc : Doc, node : DocNode, field : FieldDefinition, value : number, network? : StepDependencyNetwork) => void {readOnly}
+    --
+    + NetworkStep(execute: (doc : Doc, node : DocNode, field : FieldDefinition, value : number, network? : StepDependencyNetwork) => void)
+}
+enum Operator {
+    sum
+    min
+    max
+    count
+}
+class AggregateChildrenFieldStep extends NetworkStep {
+    - childSourceField : FieldDefinition
+    - targetField : FieldDefinition
+    - operator : Operator
+    - allowedTypes : (typeof NodeType)[]
+    - allowedChildTypes : (typeof NodeType)[]
+    --
+    + AggregateChildrenFieldStep(childSourceField : FieldDefinition, targetField : FieldDefinition, operator : Operator, allowedTypes : (typeof NodeType)[], allowedChildTypes : (typeof NodeType)[])
+}
+class AggregateChildrenFieldToParentStep extends NetworkStep {
+    - childSourceField : FieldDefinition
+    - parentTargetField : FieldDefinition
+    - operator : Operator
+    - allowedParentsTypes : (typeof NodeType)[]
+    - allowedChildrenTypes : (typeof NodeType)[]
+    --
+    + AggregateChildrenFieldToParentStep(childSourceField : FieldDefinition, parentTargetField : FieldDefinition, operator : Operator, allowedParentsTypes : (typeof NodeType)[], allowedChildrenTypes : (typeof NodeType)[])
+}
+class AttachFieldStep extends NetworkStep {
+    - sourceField : FieldDefinition
+    - targetField : FieldDefinition
+    - allowedTypes : (typeof NodeType)[]
+    --
+    + AttachFieldStep(sourceField : FieldDefinition, targetField : FieldDefinition, allowedTypes : (typeof NodeType)[])
+}
+class AttachParentFieldStep extends NetworkStep {
+    - parentSourceField : FieldDefinition
+    - targetField : FieldDefinition
+    - allowedTypes : (typeof NodeType)[]
+    - allowedParentTypes : (typeof NodeType)[]
+    --
+    + AttachParentFieldStep(parentSourceField : FieldDefinition, targetField : FieldDefinition, allowedTypes : (typeof NodeType)[], allowedParentTypes : (typeof NodeType)[])
+}
+class DistributeProportionalOnChildrenStep extends NetworkStep {
+    - sourceField : FieldDefinition
+    - childrenTargetField : FieldDefinition
+    - nodeTypes : (typeof NodeType)[]
+    - childTypes : (typeof NodeType)[]
+    --
+    + DistributeProportionalOnChildrenStep(sourceField : FieldDefinition, childrenTargetField : FieldDefinition, nodeTypes : (typeof NodeType)[], childTypes : (typeof NodeType)[])
+}
+class ZeroSubTreeStep extends NetworkStep {
+    - targetField : FieldDefinition
+    - types : (typeof NodeType)[]
+    --
+    + ZeroSubTreeStep(targetField : FieldDefinition, types : (typeof NodeType)[])
+}
+class EvaluateRulesStep extends NetworkStep {}
+class EvaluateParentRulesStep extends NetworkStep {}
+class SetNewFieldValueStep extends NetworkStep {}
+class ReapeatNetworkForChildrenStep extends NetworkStep {
+    - childrenTargetField : FieldDefinition
+    --
+    + ReapeatNetworkForChildrenStep(childrenTargetField : FieldDefinition)
+}
+}
+
+' Node-Types
+package "Node-Types" {
+class NodeType {
+    + typeId : string {readOnly}
+    + label : string {readOnly}
+    {static} # defaultFields : FieldDefinition[] {readOnly}
+    + fields : FieldDefinition[]
+    {static} # defaultRules : Rule[] {readOnly}
+    + rules : Rule[] {readOnly}
+    --
+    + NodeType(typeId : string, label : string, fields : FieldDefinition[], labels : {id, label}[], rules : Rule[])
+    # getDefaultFields() : FieldDefinition[]
+    # getDefaultRules() : Rule[]
+    + addField(field : FieldDefinition) : void
+    + removeField(id : string) : void
+    {static} + get allowedChildTypes() : (typeof NodeType)[]
+    + canAddChild(nodeType : NodeType) : boolean
+    + evaluateRules(networkState : StepDependencyNetworkState, field : FieldDefinition) : void
+    + setFieldLabels(labels : {id, label}[]) : void
+    + clone() : this
+}
+class FieldDefinition {
+    + id : string {readOnly}
+    + value : number
+    + label : string
+    --
+    + FieldDefinition(id : string, value : number, label? : string)
+    + setValue(value : number) : void
+    + setLabel(label : string) : void
+}
+class Rule {
+    + id : string {readOnly}
+    + expression : string {readOnly}
+    + fieldId : string {readOnly}
+    + networkState : StepDependencyNetworkState {readOnly}
+    + triggerFieldId : string {readOnly}
+    --
+    + Rule(id : string, expression : string, fieldId : string, networkState : StepDependencyNetworkState, triggerFieldId : string = "")
+    + evaluate(networkState : StepDependencyNetworkState, node : NodeType, changedField : FieldDefinition) : void
+    + evaluateExpression(expression : string, fields : FieldDefinition[]) : number
+}
+}
+
+' Beziehungen
+' Node-Tree
+Doc "1" --> "1" DocNode : root
+Doc "1" --> "1" DocState : currentState
+DocNode "*" *--> "1" NodeType : type (Klon)
+
+' States
+DocState "1" *-- "0..*" Transition : transitions
+Transition "*" --> "1" DocState : targetState
+
+' Dependency-Networks
+StepDependencyNetwork "*" o--> "*" NetworkStep : nodeTypeSteps
+StepDependencyNetwork "*" --> "1" StepDependencyNetworkState : networkState
+StepDependencyNetwork ..> NodeType : <<key: NodeType-Klassen>>
+ReapeatNetworkForChildrenStep ..> StepDependencyNetwork : run()
+EvaluateRulesStep ..> NodeType : evaluateRules()
+EvaluateParentRulesStep ..> NodeType : evaluateRules()
+
+' Node-Types
+NodeType "1" *-- "0..*" FieldDefinition : fields
+NodeType "1" *-- "0..*" Rule : rules
+Rule "*" --> "1" StepDependencyNetworkState : networkState
+Rule ..> FieldDefinition : fieldId / triggerFieldId (per id)
+note right of NetworkStep
+    Unterklassen übergeben ihre Logik als
+    Closure an den super()-Konstruktor (execute).
+end note
+@enduml

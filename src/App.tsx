@@ -9,7 +9,7 @@ import {
   CostNodeView,
   CostDocument,
 } from "./semantic/stateMachine";
-import { exampleDoc } from "./semantic/stateMachine-implementationExample";
+import { exampleDoc } from "./semantic/doc/basic-example/stateMachine-implementationExample";
 
 function buildPmDocFromCostNode(node: CostNodeView): Node {
   return costSchema.node("doc", null, [buildCostItemNode(node)]);

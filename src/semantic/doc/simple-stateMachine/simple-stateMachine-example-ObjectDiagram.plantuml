@@ -1,0 +1,102 @@
+@startuml simple-stateMachine-example
+object "doc : Doc" as doc {
+  currentState = forward
+}
+
+' State-Machine
+package "State-Machine" {
+  object "forward : DocState" as forward
+  object "backward : DocState" as backward
+
+  object "forward-backward-transition : Transition" as t1 {
+    field ist Ziel einer backward-Rule
+  }
+  object "backward-forward-transition : Transition" as t2 {
+    field ist kein Ziel einer backward-Rule
+  }
+}
+
+doc --> forward : currentState
+forward --> t1
+t1 --> backward : targetState
+backward --> t2
+t2 --> forward : targetState
+
+' Dependency-Networks
+package "Dependency-Networks" {
+  object "forwardNetworkSetValue : StepDependencyNetwork" as fwSet {
+    TotalCostNode:
+    1. setValue
+  }
+
+  object "forwardNetwork : StepDependencyNetwork" as fwNet {
+    TotalCostNode:
+    1. repeatNetworkForChildren (total)
+    2. attachChildrenTotal (children.total → childrenTotal)
+    3. evaluateRules
+  }
+
+  object "backwardNetwork : StepDependencyNetwork" as bwNet {
+    TotalCostNode:
+    1. setValue
+    2. evaluateRules
+    3. distributeTotalOnChildrenBackwards (total → children.total)
+    4. repeatNetworkForChildren (total)
+  }
+
+  object "forwardNetworkState" as fwNs
+  object "backwardNetworkState" as bwNs
+}
+
+forward --> fwSet : 1. startAt: changedNode
+forward --> fwNet : 2. startAt: root
+backward --> bwNet : 1. startAt: changedNode
+backward --> fwNet : 2. startAt: root
+
+fwSet --> fwNs
+fwNet --> fwNs
+bwNet --> bwNs
+
+' Node-Type & Rules
+package "Node-Type & Rules" {
+  object "title : TotalCostNode" as title {
+    fields = total, childrenTotal
+    allowedChildTypes = [TotalCostNode]
+  }
+
+  object "total-forward : Rule" as fwR {
+    total = childrenTotal > 0 ? childrenTotal : total
+  }
+
+  object "total-backward : Rule" as bwR {
+    total = total
+  }
+}
+
+doc --> title : nodeTypes["title"]
+title --> fwR
+title --> bwR
+fwR --> fwNs
+bwR --> bwNs
+
+' Node-Tree (Beispieldaten)
+package "Node-Tree (Beispiel)" {
+  object "Projekt : DocNode" as p {
+    total = 1000
+    childrenTotal = 1000
+  }
+  object "Teil A : DocNode" as a {
+    total = 600
+    childrenTotal = 0
+  }
+  object "Teil B : DocNode" as b {
+    total = 400
+    childrenTotal = 0
+  }
+}
+
+doc --> p : root
+p --> a : children
+p --> b : children
+
+@enduml

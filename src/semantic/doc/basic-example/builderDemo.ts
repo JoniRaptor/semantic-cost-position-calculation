@@ -1,5 +1,5 @@
-import * as Builder from "./builder";
-import { DocNode, FieldDefinition, NodeType, Rule } from "./stateMachine";
+import * as Builder from "../../builder";
+import { DocNode, FieldDefinition, NodeType, Rule } from "../../stateMachine";
 
 // Network states
 const forwardNetworkState = new Builder.NetworkStateBuilder()

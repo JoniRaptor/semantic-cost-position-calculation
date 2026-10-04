@@ -1,0 +1,125 @@
+@startuml BuilderActivityDiagram
+title Sequence for using the builder-fluent-API
+start
+
+partition "1. create Network-States" {
+  repeat
+    :new NetworkStateBuilder()
+    .id(id)
+    .build();
+  repeat while (more Network-States?) is (yes) not (no)
+}
+
+partition "2. NodeType-Classes" {
+  repeat
+    :class extends NodeType;
+    repeat
+      :defaultFields += new FieldDefinitionBuilder()
+      .id(id)
+      .label(l)?
+      .build();
+    repeat while (more fields?) is (yes) not (no)
+    repeat
+      :defaultRules += new RuleBuilder()
+      .id(id)
+      .calculationRule(expression)
+      .targetFieldId(fieldId)
+      .forNetworkState(networkState)
+      .triggerOnChangeOfField(fieldId)?
+      .build();
+      note left
+        needs Network-States (1)
+      end note
+    repeat while (more rule) is (yes) not (no)
+    :static get allowedChildTypes()
+    -> permitted types of Child-Classes;
+    note right
+      ex.: TotalCostNode
+    end note
+  repeat while (more NodeType-Classes) is (yes) not (no)
+}
+
+partition "3. Step-Instances" {
+  repeat
+    :new StepInstanceBuilder()
+    .type(StepType.X)
+    ...Setters for the StepType
+    .build();
+    note left
+      predefinied Steps: need field-ids and
+      NodeType-Classes (ex. attachChildrenTotal)
+    end note
+  repeat while (more Steps) is (yes) not (no)
+}
+
+partition "4. Dependency-Networks" {
+  repeat
+    :new StepDependencyNetworkBuilder();
+    repeat
+      :.addNodeTypeSteps([NodeType-Classesn], [Steps]);
+    repeat while (more Step sequences for other NodeTypes) is (yes) not (no)
+    :.networkState(networkState)
+    .build();
+  repeat while (more Dependency-Networks) is (yes) not (no)
+}
+
+partition "5. Doc-States (State-Machine)" {
+  :new DocStateBuilder();
+  repeat
+    :.id(stateId);
+    repeat
+      :.network(startAt, network);
+      note right
+        add-order = execution-order
+        startAt: "root" | "changedNode"
+        needs: Dependency-Networks (4)
+      end note
+    repeat while (more Networks) is (yes) not (no)
+    repeat
+      :.transition()
+      .to(targetStateId)
+      .when(condition)
+      .build();
+      note right
+        targetStateId needs to be unique
+        condition is TypeScript-Function
+        (node, field, value) => boolean
+      end note
+    repeat while (more Transitions) is (yes) not (no)
+    :.build();
+  repeat while (more DocStates) is (yes) not (no)
+  :.build();
+  note right
+    -> Map (stateId -> DocState)
+  end note
+}
+
+partition "6. Doc" {
+  :new DocBuilder()
+  .startState(states.get(startStateId));
+  note left
+    needs: DocStates (5)
+  end note
+  repeat
+    :.nodeType(XNode)
+    .typeId(id)
+    .label(l)
+    .labels([...])?
+    .fields([...])?
+    .rules([...])?
+    .build();
+    note left
+      needs: NodeType-Classes (2)
+      labels are Objects of { id: field-id, label: string }
+    end note
+  repeat while (more instances of NodeTypes) is (yes) not (no)
+  :.build();
+}
+
+partition "7. using the Doc" {
+  :doc.setRoot(doc.convertCostNodeToDocNode(Node-Tree-Object));
+  :doc.updateTreeForFieldChange(doc, nodeId, field, value) -> for every node-change;
+}
+
+stop
+@enduml

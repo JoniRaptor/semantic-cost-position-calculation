@@ -19,7 +19,7 @@ import {
   EvaluateParentRulesStep,
   SetNewFieldValueStep,
   ReapeatNetworkForChildrenStep,
-} from "./stateMachine";
+} from "../../stateMachine";
 
 // Example implementation
 

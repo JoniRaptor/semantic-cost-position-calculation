@@ -1,0 +1,15 @@
+@startuml
+participant "EvaluateRulesStep (doc, node, field, value, dependencyNetwork)" as RCBF
+participant "evaluateRules" as AR
+
+RCBF -> AR: NodeType.evaluateRules(dependencyNetworkState, field)
+loop apply for every rule defined in the nodeType of node
+    alt currentRule.networkStatw != dependencyNetworkState
+        AR -> AR: continue to next rule in nodeType
+    end
+    note left: 'rules apllied in the order they are defined in'
+    AR -> AR: evaluate Expression from currentRule for node
+    AR -> AR: set the field.value to the calculated value
+    AR -> AR: continue to next rule in nodeType
+end
+@enduml
